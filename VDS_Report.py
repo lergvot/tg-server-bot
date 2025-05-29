@@ -1,8 +1,10 @@
-import psutil
-import platform
-import datetime
 import asyncio
+import datetime
+import platform
 import subprocess
+
+import psutil
+
 
 def format_uptime(td):
     days = td.days

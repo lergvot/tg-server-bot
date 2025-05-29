@@ -1,9 +1,11 @@
-import google.generativeai as genai
 import logging
+
+import google.generativeai as genai
+
 
 def gpt(content: str, api_key, user_name) -> str:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-8b')
+    model = genai.GenerativeModel("gemini-1.5-flash-8b")
     try:
         # Формируем промпт как одну строку
         system_prompt = (
@@ -26,11 +28,12 @@ def gpt(content: str, api_key, user_name) -> str:
         response = chat.send_message(prompt)
         chat_response: str = response.text
 
-        print('\033[31m{}'.format(f'Gemini: {chat_response}\033[0;0m'))
+        print("\033[31m{}".format(f"Gemini: {chat_response}\033[0;0m"))
         return chat_response
     except Exception as e:
         logging.error(f"Ошибка в gpt: {str(e)}")
         return "Произошла ошибка генерации текстового ответа, повтори попытку позже или обратись за информацией к разработчику."
+
 
 def gpt_test(message: str) -> str:
     return message + " ***gpt_test***"
