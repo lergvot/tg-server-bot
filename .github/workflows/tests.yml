@@ -38,7 +38,7 @@ jobs:
           if [ "${{ steps.pytest_step.outcome }}" != "success" ]; then
             STATUS="❌ Тесты не пройдены"
           fi
-          curl -X POST "'"$CI_ENDPOINT"'" \
+          curl -X POST "$CI_ENDPOINT" \
             -H "Content-Type: application/json" \
             -d '{
               "secret": "'"$SECRET"'",
