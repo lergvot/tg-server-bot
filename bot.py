@@ -7,18 +7,19 @@ import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler
 from telegram.ext.filters import COMMAND, TEXT
+from uvicorn import Config, Server
 
+# =========================
+# Переменные окружения
+# =========================
+tgkey = os.getenv("TGKEY")
+chatID = os.getenv("CHATID")
+api_key = os.getenv("GEMINI_KEY")
+ci_secret = os.getenv("CI_SECRET")
 
-try:
-    from gpt import gpt
-    from system_report import main as report
-except ImportError as e:
-    print(
-        f"Error importing modules: {e}. Make sure the files are in the correct directory."
-    )
-    exit()
-
-# Setup logging
+# =========================
+# Настройка логов
+# =========================
 cwd = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(cwd, "tg_bot.log")
 logging.basicConfig(
@@ -31,11 +32,23 @@ logging.basicConfig(
 httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.WARNING)
 
-tgkey = os.getenv("TGKEY")
-chatID = os.getenv("CHATID")
-api_key = os.getenv("GEMINI_KEY")
+# =========================
+# Импорт модулей
+# =========================
+try:
+    from bot_server import create_bot_server
+    from gpt import gpt
+    from system_report import main as report
+except ImportError as e:
+    print(
+        f"Error importing modules: {e}. Make sure the files are in the correct directory."
+    )
+    exit()
 
 
+# =========================
+# Telegram bot logic
+# =========================
 class Main:
     def __init__(self):
         self.lana_command_active = False
@@ -44,7 +57,7 @@ class Main:
         self.lana_command_active = False
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"Привет {update.effective_user.first_name}, Бот запущен.\nВыбери режим работы бота введя команду /chat или /status",
+            text=f"Привет {update.effective_user.first_name}, Бот запущен.\nВыбери режим работы бота: /chat или /status",
         )
 
     async def lana(self, update: Update, context) -> None:
@@ -64,15 +77,14 @@ class Main:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=str(message),
-                parse_mode="Markdown",  # <--- добавлено для форматирования
+                parse_mode="Markdown",
             )
-            logging.info("Отчёт успешно отправлен через VDS_Report.")
+            logging.info("Отчёт успешно отправлен.")
         except Exception as e:
             await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Произошла ошибка при генерации отчёта.",
+                chat_id=update.effective_chat.id, text="Произошла ошибка при отчёте."
             )
-            logging.error(f"Ошибка в VDS_Report: {str(e)}")
+            logging.error(f"Ошибка в system_report: {str(e)}")
 
     async def echo_message(self, update: Update, context) -> None:
         user = update.effective_user.first_name
@@ -88,20 +100,28 @@ class Main:
                     )
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id, text=str(gpt_answer)
-                )  # Convert to string
+                )
                 logging.info(f"Ответ GPT: {gpt_answer}")
             except Exception as e:
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Произошла ошибка при обработке запроса.",
+                    chat_id=update.effective_chat.id, text="Ошибка в GPT."
                 )
                 logging.error(f"Ошибка в GPT: {str(e)}")
         else:
             await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Выбери режим работы бота введя команду /chat или /status",
+                chat_id=update.effective_chat.id, text="Выбери режим: /chat или /status"
             )
             logging.info("Получено сообщение вне активного режима.")
+
+
+# =========================
+# Запуск FastAPI и Telegram
+# =========================
+async def run_fastapi():
+    app = create_bot_server(tg_token=tgkey, chat_id=chatID, ci_secret=ci_secret)
+    config = Config(app=app, host="0.0.0.0", port=8080, log_level="info")
+    server = Server(config)
+    await server.serve()
 
 
 def main_func():
@@ -118,7 +138,13 @@ def main_func():
     for handler in handlers:
         application.add_handler(handler)
 
-    application.run_polling()
+    async def runner():
+        await asyncio.gather(
+            run_fastapi(),  # FastAPI сервер
+            application.run_polling(),  # Telegram polling
+        )
+
+    asyncio.run(runner())
 
 
 if __name__ == "__main__":
@@ -126,6 +152,4 @@ if __name__ == "__main__":
         main_func()
     except Exception as e:
         logging.error(f"Неизвестная ошибка: {str(e)}")
-        print(
-            "Произошла неизвестная ошибка. Попробуйте перезапустить бота или обратитесь к администратору."
-        )
+        print("Что-то пошло не так. Проверь журнал.")
