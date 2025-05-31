@@ -67,7 +67,7 @@ jobs:
           CI_ENDPOINT: ${{ secrets.CI_ENDPOINT }}
           SECRET: ${{ secrets.CI_SECRET }}
         run: |
-          curl -X POST "'"$CI_ENDPOINT"'" \
+          curl -X POST "$CI_ENDPOINT" \
             -H "Content-Type: application/json" \
             -d '{
               "secret": "'"$SECRET"'",
