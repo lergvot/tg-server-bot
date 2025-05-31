@@ -1,3 +1,4 @@
+# system_report.py
 import asyncio
 import datetime
 import platform
@@ -12,25 +13,28 @@ def format_uptime(td):
     minutes, seconds = divmod(remainder, 60)
     return f"{days}d {hours}h {minutes}m {seconds}s"
 
+
 def bytes_to_human_readable(num_bytes):
-    for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB']:
+    for unit in ["B", "KiB", "MiB", "GiB", "TiB"]:
         if num_bytes < 1024.0:
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= 1024.0
     return f"{num_bytes:.1f} PiB"
 
+
 def check_service(service_name):
     try:
         result = subprocess.run(
-            ['systemctl', 'is-active', service_name],
+            ["systemctl", "is-active", service_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
         )
         status = result.stdout.strip()
         return f"{service_name}: {status}"
     except Exception as e:
         return f"{service_name}: Error ({e})"
+
 
 async def main(tgkey, chatID):
     try:
@@ -40,7 +44,7 @@ async def main(tgkey, chatID):
 
         cpu_percent = psutil.cpu_percent(interval=1)
         mem = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
+        disk = psutil.disk_usage("/")
         swap = psutil.swap_memory()
 
         # Network usage
@@ -60,23 +64,23 @@ async def main(tgkey, chatID):
         if disk.percent > 90:
             alerts.append("⚠️ Disk space running low!")
 
-        alert_text = '\n'.join(alerts) if alerts else "✅ System health is OK"
+        alert_text = "\n".join(alerts) if alerts else "✅ System health is OK"
 
         # Топ процессы
         top_procs = sorted(
-            psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']),
-            key=lambda p: p.info['cpu_percent'],
-            reverse=True
+            psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]),
+            key=lambda p: p.info["cpu_percent"],
+            reverse=True,
         )[:3]
 
-        proc_info = '\n'.join(
+        proc_info = "\n".join(
             f"— *{p.info['name'] or 'Unknown'}* (PID `{p.info['pid']}`): `{p.info['cpu_percent']}%` CPU, `{p.info['memory_percent']:.1f}%` RAM"
             for p in top_procs
         )
 
         # Статус сервисов
-        services_to_check = ['ssh', 'nginx', 'docker']
-        services_status = '\n'.join(check_service(s) for s in services_to_check)
+        services_to_check = ["ssh", "nginx", "docker"]
+        services_status = "\n".join(check_service(s) for s in services_to_check)
 
         # Финальное сообщение
         message = (
@@ -107,5 +111,6 @@ async def main(tgkey, chatID):
         print(f"[ERROR] {e}")
         return "Ошибка при формировании отчёта."
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     asyncio.run(main())

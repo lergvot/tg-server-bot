@@ -1,3 +1,4 @@
+# bot.py
 import asyncio
 import concurrent.futures
 import logging
@@ -7,11 +8,10 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler
 from telegram.ext.filters import COMMAND, TEXT
 
-# Assuming gpt and vds_report are in separate files
 
 try:
     from gpt import gpt
-    from VDS_Report import main as vds_report
+    from system_report import main as report
 except ImportError as e:
     print(
         f"Error importing modules: {e}. Make sure the files are in the correct directory."
@@ -59,7 +59,7 @@ class Main:
             loop = asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 message = await loop.run_in_executor(
-                    pool, lambda: asyncio.run(vds_report(tgkey, chatID))
+                    pool, lambda: asyncio.run(report(tgkey, chatID))
                 )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
