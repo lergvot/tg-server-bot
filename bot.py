@@ -119,7 +119,7 @@ class Main:
 # =========================
 async def run_fastapi():
     app = create_bot_server(tg_token=tgkey, chat_id=chatID, ci_secret=ci_secret)
-    config = Config(app=app, host="0.0.0.0", port=8080, log_level="info")
+    config = Config(app=app, log_level="info")
     server = Server(config)
     await server.serve()
 
