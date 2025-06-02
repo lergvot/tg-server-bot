@@ -77,7 +77,7 @@ class Main:
             loop = asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 message = await loop.run_in_executor(
-                    pool, lambda: asyncio.run(report(tgkey, chatID))
+                    pool, lambda: report(tgkey, chatID)
                 )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -144,10 +144,10 @@ def main_func():
         application.add_handler(handler)
 
     async def runner():
-        await asyncio.gather(
-            run_fastapi(),  # FastAPI сервер
-            application.run_polling(),  # Telegram polling
-        )
+        # Обе функции возвращают корутины, собираем их явно
+        fastapi_task = run_fastapi()
+        polling_task = application.run_polling()
+        await asyncio.gather(fastapi_task, polling_task)
 
     asyncio.run(runner())
 
