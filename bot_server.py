@@ -4,7 +4,6 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 
 def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
-    """Создаёт FastAPI-приложение, которое обрабатывает CI webhook."""
     app = FastAPI()
     bot = Bot(token=tg_token)
 
