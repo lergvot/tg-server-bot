@@ -43,7 +43,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "secret": "'"$SECRET"'",
-              "project": ${{ github.repository }},
+              "project": "'"${{ github.repository }}"'",
               "status": "'"$STATUS"'",
               "commit": "'"$(git rev-parse --short HEAD)"'",
               "author": "'"${{ github.actor }}"'",
