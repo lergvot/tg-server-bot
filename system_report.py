@@ -26,7 +26,7 @@ def check_service(service_name):
     try:
         # Явно указываем путь к systemctl
         result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", service_name],
+            ["systemctl", "is-active", service_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
