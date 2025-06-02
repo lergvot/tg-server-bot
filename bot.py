@@ -6,7 +6,7 @@ import os
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler
-from telegram.ext.filters import COMMAND, TEXT
+from telegram.ext import filters
 from uvicorn import Config, Server
 
 # =========================
@@ -16,6 +16,11 @@ tgkey = os.getenv("TGKEY")
 chatID = os.getenv("CHATID")
 api_key = os.getenv("GEMINI_KEY")
 ci_secret = os.getenv("CI_SECRET")
+
+if not all([tgkey, chatID, api_key, ci_secret]):
+    raise RuntimeError(
+        "Не заданы все необходимые переменные окружения (TGKEY, CHATID, GEMINI_KEY, CI_SECRET)"
+    )
 
 # =========================
 # Настройка логов
@@ -132,7 +137,7 @@ def main_func():
         CommandHandler("start", main_handler.start),
         CommandHandler("chat", main_handler.lana),
         CommandHandler("status", main_handler.status),
-        MessageHandler(TEXT & (~COMMAND), main_handler.echo_message),
+        MessageHandler(filters.TEXT & (~filters.COMMAND), main_handler.echo_message),
     ]
 
     for handler in handlers:
