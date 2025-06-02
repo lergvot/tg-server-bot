@@ -74,9 +74,14 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "secret": "'"$SECRET"'",
-              "project": "Telegram Bot",
-              "status": "✅ Успешно",
+              "project": ${{ github.repository }},
+              "status": "'"$STATUS"'",
               "commit": "'"$(git rev-parse --short HEAD)"'",
+              "author": "'"${{ github.actor }}"'",
+              "branch": "'"${{ github.ref_name }}"'",
+              "workflow": "'"${{ github.workflow }}"'",
+              "event_name": "'"${{ github.event_name }}"'",
+              "message": "'"${{ github.event.head_commit.message || '' }}"'",
               "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
               "repo_url": "https://github.com/${{ github.repository }}"
             }'
