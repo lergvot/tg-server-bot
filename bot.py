@@ -3,10 +3,10 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import threading
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler
-from telegram.ext import filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from uvicorn import Config, Server
 
 # =========================
@@ -129,7 +129,15 @@ async def run_fastapi():
     await server.serve()
 
 
+def start_fastapi():
+    asyncio.run(run_fastapi())
+
+
 def main_func():
+    # Запускаем FastAPI сервер в отдельном потоке
+    fastapi_thread = threading.Thread(target=start_fastapi, daemon=True)
+    fastapi_thread.start()
+
     application = ApplicationBuilder().token(tgkey).build()
     main_handler = Main()
 
@@ -143,13 +151,8 @@ def main_func():
     for handler in handlers:
         application.add_handler(handler)
 
-    async def runner():
-        # Обе функции возвращают корутины, собираем их явно
-        fastapi_task = run_fastapi()
-        polling_task = application.run_polling()
-        await asyncio.gather(fastapi_task, polling_task)
-
-    asyncio.run(runner())
+    # Запускаем Telegram polling (блокирующий вызов)
+    application.run_polling()
 
 
 if __name__ == "__main__":
