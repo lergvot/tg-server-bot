@@ -74,11 +74,7 @@ class Main:
     async def status(self, update: Update, context) -> None:
         self.lana_command_active = False
         try:
-            loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                message = await loop.run_in_executor(
-                    pool, lambda: report(tgkey, chatID)
-                )
+            message = await report(tgkey, chatID)
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=str(message),
