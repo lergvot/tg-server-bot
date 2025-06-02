@@ -33,7 +33,7 @@ def gpt(content: str, api_key, user_name) -> str:
         return chat_response
     except Exception as e:
         logging.error(f"Ошибка в gpt: {str(e)}")
-        return "Произошла ошибка генерации текстового ответа, повтори попытку позже или обратись за информацией к разработчику."
+        return "Произошла ошибка генерации текстового ответа."
 
 
 def gpt_test(message: str) -> str:
