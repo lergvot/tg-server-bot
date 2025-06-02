@@ -1,5 +1,5 @@
 # bot_server.py
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 

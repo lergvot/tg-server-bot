@@ -24,19 +24,22 @@ def bytes_to_human_readable(num_bytes):
 
 def check_service(service_name):
     try:
+        # Явно указываем путь к systemctl
         result = subprocess.run(
-            ["systemctl", "is-active", service_name],
+            ["/usr/bin/systemctl", "is-active", service_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
         status = result.stdout.strip()
+        if not status:
+            status = result.stderr.strip()
         return f"{service_name}: {status}"
     except Exception as e:
         return f"{service_name}: Error ({e})"
 
 
-async def main(tgkey, chatID):
+async def main(tgkey=None, chatID=None):
     try:
         uname = platform.uname()
         boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
@@ -66,9 +69,22 @@ async def main(tgkey, chatID):
 
         alert_text = "\n".join(alerts) if alerts else "✅ System health is OK"
 
-        # Топ процессы
+        # --- Фикс топа процессов по CPU ---
+        # Первый проход для инициализации cpu_percent
+        for p in psutil.process_iter():
+            try:
+                p.cpu_percent(interval=None)
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+        procs = []
+        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+            try:
+                procs.append(p)
+            except Exception:
+                pass
         top_procs = sorted(
-            psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]),
+            procs,
             key=lambda p: p.info["cpu_percent"],
             reverse=True,
         )[:3]

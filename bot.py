@@ -9,9 +9,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from uvicorn import Config, Server
 
-# =========================
 # Переменные окружения
-# =========================
 tgkey = os.getenv("TGKEY")
 chatID = os.getenv("CHATID")
 api_key = os.getenv("GEMINI_KEY")
@@ -22,9 +20,8 @@ if not all([tgkey, chatID, api_key, ci_secret]):
         "Не заданы все необходимые переменные окружения (TGKEY, CHATID, GEMINI_KEY, CI_SECRET)"
     )
 
-# =========================
+
 # Настройка логов
-# =========================
 cwd = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(cwd, "tg_bot.log")
 logging.basicConfig(
@@ -37,9 +34,8 @@ logging.basicConfig(
 httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.WARNING)
 
-# =========================
+
 # Импорт модулей
-# =========================
 try:
     from bot_server import create_bot_server
     from gpt import gpt
@@ -51,9 +47,7 @@ except ImportError as e:
     exit()
 
 
-# =========================
 # Telegram bot logic
-# =========================
 class Main:
     def __init__(self):
         self.lana_command_active = False
@@ -115,9 +109,7 @@ class Main:
             logging.info("Получено сообщение вне активного режима.")
 
 
-# =========================
 # Запуск FastAPI и Telegram
-# =========================
 async def run_fastapi():
     app = create_bot_server(tg_token=tgkey, chat_id=chatID, ci_secret=ci_secret)
     config = Config(app=app, host="127.0.0.1", port=8001, log_level="info")
