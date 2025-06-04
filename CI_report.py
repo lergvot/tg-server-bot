@@ -29,16 +29,16 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
         if data.get("secret") != ci_secret:
             raise HTTPException(status_code=403, detail="Forbidden")
 
-        project = get_str_field("project", "<неизвестный проект>")
-        workflow = get_str_field("workflow", "<неизвестный workflow>")
-        author = get_str_field("author", "<неизвестный автор>")
-        branch = get_str_field("branch", "<неизвестная ветка>")
-        status = get_str_field("status", "<нет статуса>")
-        commit = get_str_field("commit", "")[:7] or "<нет коммита>"
-        commit_msg = get_str_field("message", "—").splitlines()[0]
-        event_name = get_str_field("event_name", "<неизвестное событие>")
-        url = get_str_field("url", "https://example.com")
-        repo_url = get_str_field("repo_url", "https://example.com")
+        project = get_str_field(data, "project", "<неизвестный проект>")
+        workflow = get_str_field(data, "workflow", "<неизвестный workflow>")
+        author = get_str_field(data, "author", "<неизвестный автор>")
+        branch = get_str_field(data, "branch", "<неизвестная ветка>")
+        status = get_str_field(data, "status", "<нет статуса>")
+        commit = get_str_field(data, "commit", "")[:7] or "<нет коммита>"
+        commit_msg = get_str_field(data, "message", "—").splitlines()[0]
+        event_name = get_str_field(data, "event_name", "<неизвестное событие>")
+        url = get_str_field(data, "url", "https://example.com")
+        repo_url = get_str_field(data, "repo_url", "https://example.com")
 
         text = (
             f"🛰 <b>CI-деплой завершён!</b>\n\n"
