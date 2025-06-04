@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+
 jobs:
   test:
     name: Run Tests
@@ -26,12 +27,14 @@ jobs:
           pip install pytest
 
       - name: Run tests
-        run: pytest -v --disable-warnings || exit 0
+        run: |
+          # Запускаем тесты, если упадут — workflow тоже упадёт (по умолчанию)
+          pytest -v --disable-warnings
 
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: test  # Запускается ТОЛЬКО если job test прошёл успешно
+    needs: test  # Запускается только если job test прошёл успешно
 
     steps:
       - name: Checkout code
@@ -48,7 +51,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Deploy to server
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v0.1.10  # Зафиксировали стабильную версию action
         with:
           host: ${{ secrets.HOST }}
           port: ${{ secrets.PORT }}
@@ -65,23 +68,34 @@ jobs:
             systemctl restart tgbot.service
             echo "Deployment completed"
 
+      - name: Set CI status env
+        # Явно задаём переменную статуса, чтобы не было undefined
+        run: echo "STATUS=✅ Успешно" >> $GITHUB_ENV
+
+      - name: Prepare CI payload
+        id: prepare_payload
+        run: |
+          echo "Creating JSON payload for CI report"
+          echo '{
+            "secret": "'"${{ secrets.CI_SECRET }}"'",
+            "project": "'"${{ github.repository }}"'",
+            "status": "'"$STATUS"'",
+            "commit": "'"$(git rev-parse --short HEAD)"'",
+            "author": "'"${{ github.actor }}"'",
+            "branch": "'"${{ github.ref_name }}"'",
+            "workflow": "'"${{ github.workflow }}"'",
+            "event_name": "'"${{ github.event_name }}"'",
+            "message": "'"${{ github.event.head_commit.message }}"'",
+            "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "repo_url": "https://github.com/${{ github.repository }}"
+          }' > ci_payload.json
+          echo "::set-output name=payload_file::ci_payload.json"
+
       - name: Send CI Report to Telegram Bot
         env:
           CI_ENDPOINT: ${{ secrets.CI_ENDPOINT }}
-          SECRET: ${{ secrets.CI_SECRET }}
         run: |
           curl -X POST "$CI_ENDPOINT" \
             -H "Content-Type: application/json" \
-            -d '{
-              "secret": "'"$SECRET"'",
-              "project": "'"${{ github.repository }}"'",
-              "status": "'"$STATUS"'",
-              "commit": "'"$(git rev-parse --short HEAD)"'",
-              "author": "'"${{ github.actor }}"'",
-              "branch": "'"${{ github.ref_name }}"'",
-              "workflow": "'"${{ github.workflow }}"'",
-              "event_name": "'"${{ github.event_name }}"'",
-              "message": "'"${{ github.event.head_commit.message || '' }}"'",
-              "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-              "repo_url": "https://github.com/${{ github.repository }}"
-            }'
+            -d @"${{ steps.prepare_payload.outputs.payload_file }}"
+
