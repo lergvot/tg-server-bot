@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches: 
+      - main
 
 jobs:
   test:
@@ -32,6 +35,7 @@ jobs:
           # pytest -v --disable-warnings
           # Тестов пока нет, поэтому просто выводим сообщение
           echo "No tests to run yet, skipping pytest"
+          
 
   deploy:
     name: Deploy to Server
@@ -91,7 +95,7 @@ jobs:
             "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "repo_url": "https://github.com/${{ github.repository }}"
           }' > ci_payload.json
-          echo "::set-output name=payload_file::ci_payload.json"
+          echo "payload_file=ci_payload.json" >> $GITHUB_OUTPUT
 
       - name: Send CI Report to Telegram Bot
         env:
