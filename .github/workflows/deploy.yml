@@ -1,4 +1,3 @@
-# deploy.yml
 name: Deploy Telegram Bot
 
 on:
@@ -28,16 +27,13 @@ jobs:
 
       - name: Run tests
         run: |
-          # Запускаем тесты, если упадут — workflow тоже упадёт (по умолчанию)
-          # pytest -v --disable-warnings
-          # Тестов пока нет, поэтому просто выводим сообщение
+          # Тестов пока нет, пропускаем pytest
           echo "No tests to run yet, skipping pytest"
-          
 
   deploy:
     name: Deploy to Server
     runs-on: ubuntu-latest
-    needs: test  # Запускается только если job test прошёл успешно
+    needs: test
 
     steps:
       - name: Checkout code
@@ -54,7 +50,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Deploy to server
-        uses: appleboy/ssh-action@v0.1.10  # Зафиксировали стабильную версию action
+        uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.HOST }}
           port: ${{ secrets.PORT }}
@@ -72,14 +68,12 @@ jobs:
             echo "Deployment completed"
 
       - name: Set CI status env
-        # Явно задаём переменную статуса, чтобы не было undefined
         run: echo "STATUS=✅ Успешно" >> $GITHUB_ENV
 
       - name: Prepare CI payload
         id: prepare_payload
         run: |
-          sleep 10
-          echo "Creating JSON payload for CI report"
+          echo "Создаём JSON для CI-репорта"
           echo '{
             "secret": "'"${{ secrets.CI_SECRET }}"'",
             "project": "'"${{ github.repository }}"'",
@@ -99,7 +93,14 @@ jobs:
         env:
           CI_ENDPOINT: ${{ secrets.CI_ENDPOINT }}
         run: |
-          curl -X POST "$CI_ENDPOINT" \
+          echo "📡 Отправляем CI-отчёт..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$CI_ENDPOINT" \
             -H "Content-Type: application/json" \
-            -d @"${{ steps.prepare_payload.outputs.payload_file }}"
+            -d @"${{ steps.prepare_payload.outputs.payload_file }}")
 
+          if [[ "$HTTP_CODE" -ne 200 ]]; then
+            echo "::warning::CI report failed with HTTP $HTTP_CODE"
+            exit 1
+          else
+            echo "✅ CI-отчёт успешно отправлен. Код ответа: $HTTP_CODE"
+          fi

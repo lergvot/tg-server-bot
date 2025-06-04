@@ -1,4 +1,3 @@
-# bot.py
 import asyncio
 import concurrent.futures
 import logging
@@ -6,19 +5,34 @@ import os
 import threading
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from uvicorn import Config, Server
 
-# Переменные окружения
-tgkey = os.getenv("TGKEY")
-chatID = os.getenv("CHATID")
-api_key = os.getenv("GEMINI_KEY")
-ci_secret = os.getenv("CI_SECRET")
+from version import version
 
-if not all([tgkey, chatID, api_key, ci_secret]):
-    raise RuntimeError(
-        "Не заданы все необходимые переменные окружения (TGKEY, CHATID, GEMINI_KEY, CI_SECRET)"
-    )
+logger = logging.getLogger(__name__)
+
+# Проверка переменных окружения
+required_env_vars = {
+    "TGKEY": os.getenv("TGKEY"),
+    "CHATID": os.getenv("CHATID"),
+    "GEMINI_KEY": os.getenv("GEMINI_KEY"),
+    "CI_SECRET": os.getenv("CI_SECRET"),
+}
+missing_vars = [k for k, v in required_env_vars.items() if not v]
+if missing_vars:
+    raise RuntimeError(f"Не заданы переменные окружения: {', '.join(missing_vars)}")
+
+tgkey = required_env_vars["TGKEY"]
+chatID = required_env_vars["CHATID"]
+api_key = required_env_vars["GEMINI_KEY"]
+ci_secret = required_env_vars["CI_SECRET"]
 
 
 # Настройка логов
@@ -34,39 +48,33 @@ logging.basicConfig(
 httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.WARNING)
 
-
 # Импорт модулей
 try:
     from CI_report import create_bot_server
     from gpt import gpt
     from system_report import main as report
 except ImportError as e:
-    print(
-        f"Error importing modules: {e}. Make sure the files are in the correct directory."
-    )
-    exit()
+    logger.error(f"Ошибка импорта модулей: {e}")
+    exit(1)
 
 
 # Telegram bot logic
 class Main:
-    def __init__(self):
-        self.lana_command_active = False
-
-    async def start(self, update: Update, context) -> None:
-        self.lana_command_active = False
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        context.user_data["lana"] = False
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"Привет {update.effective_user.first_name}, Бот запущен.\nВыбери режим работы бота: /chat или /status",
+            text=f"Привет {update.effective_user.first_name}, Бот версии {version} запущен.\nВыбери режим работы: /chat или /status",
         )
 
-    async def lana(self, update: Update, context) -> None:
-        self.lana_command_active = True
+    async def lana(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        context.user_data["lana"] = True
         await context.bot.send_message(
             chat_id=update.effective_chat.id, text="Тебя приветствует ассистент."
         )
 
-    async def status(self, update: Update, context) -> None:
-        self.lana_command_active = False
+    async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        context.user_data["lana"] = False
         try:
             message = await report(tgkey, chatID)
             await context.bot.send_message(
@@ -74,19 +82,21 @@ class Main:
                 text=str(message),
                 parse_mode="Markdown",
             )
-            logging.info("Отчёт успешно отправлен.")
+            logger.info("Отчёт успешно отправлен.")
         except Exception as e:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id, text="Произошла ошибка при отчёте."
             )
-            logging.error(f"Ошибка в system_report: {str(e)}")
+            logger.error(f"Ошибка в system_report: {str(e)}")
 
-    async def echo_message(self, update: Update, context) -> None:
+    async def echo_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         user = update.effective_user.first_name
         text = update.message.text
-        logging.info(f"Пользователь {user} написал: {text}")
+        logger.info(f"Пользователь {user} написал: {text}")
 
-        if self.lana_command_active:
+        if context.user_data.get("lana"):
             try:
                 loop = asyncio.get_running_loop()
                 with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -96,17 +106,17 @@ class Main:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id, text=str(gpt_answer)
                 )
-                logging.info(f"Ответ GPT: {gpt_answer}")
+                logger.info(f"Ответ GPT: {gpt_answer}")
             except Exception as e:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id, text="Ошибка в GPT."
                 )
-                logging.error(f"Ошибка в GPT: {str(e)}")
+                logger.error(f"Ошибка в GPT: {str(e)}")
         else:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id, text="Выбери режим: /chat или /status"
             )
-            logging.info("Получено сообщение вне активного режима.")
+            logger.info("Получено сообщение вне активного режима.")
 
 
 # Запуск FastAPI и Telegram
@@ -122,24 +132,19 @@ def start_fastapi():
 
 
 def main_func():
-    # Запускаем FastAPI сервер в отдельном потоке
     fastapi_thread = threading.Thread(target=start_fastapi, daemon=True)
     fastapi_thread.start()
 
     application = ApplicationBuilder().token(tgkey).build()
     main_handler = Main()
 
-    handlers = [
-        CommandHandler("start", main_handler.start),
-        CommandHandler("chat", main_handler.lana),
-        CommandHandler("status", main_handler.status),
-        MessageHandler(filters.TEXT & (~filters.COMMAND), main_handler.echo_message),
-    ]
+    application.add_handler(CommandHandler("start", main_handler.start))
+    application.add_handler(CommandHandler("chat", main_handler.lana))
+    application.add_handler(CommandHandler("status", main_handler.status))
+    application.add_handler(
+        MessageHandler(filters.TEXT & (~filters.COMMAND), main_handler.echo_message)
+    )
 
-    for handler in handlers:
-        application.add_handler(handler)
-
-    # Запускаем Telegram polling (блокирующий вызов)
     application.run_polling()
 
 
@@ -147,5 +152,4 @@ if __name__ == "__main__":
     try:
         main_func()
     except Exception as e:
-        logging.error(f"Неизвестная ошибка: {str(e)}")
-        print("Что-то пошло не так. Проверь журнал.")
+        logger.error(f"Неизвестная ошибка: {str(e)}")

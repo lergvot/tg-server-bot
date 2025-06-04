@@ -1,4 +1,3 @@
-# CI_report.py
 import logging
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,15 +8,25 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
     app = FastAPI()
     bot = Bot(token=tg_token)
 
+    # Настройка логгера
     logger = logging.getLogger("ci_report")
-    logger.setLevel(logging.INFO)
+    if not logger.hasHandlers():
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
     def get_str_field(data: dict, field: str, fallback: str) -> str:
-        value = data.get(field)
-        if isinstance(value, str):
-            value = value.strip()
-            return value or fallback
-        return fallback
+        return str(data.get(field, fallback)).strip() or fallback
+
+    def add_status_emoji(status: str) -> str:
+        status = status.lower()
+        if "success" in status:
+            return f"✅ {status}"
+        elif "fail" in status or "error" in status:
+            return f"❌ {status}"
+        return status
 
     @app.get("/health", tags=["system"])
     async def health():
@@ -27,13 +36,14 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
     async def ci_report(request: Request):
         data = await request.json()
         if data.get("secret") != ci_secret:
+            logger.warning("Попытка доступа с неверным секретом.")
             raise HTTPException(status_code=403, detail="Forbidden")
 
         project = get_str_field(data, "project", "<неизвестный проект>")
         workflow = get_str_field(data, "workflow", "<неизвестный workflow>")
         author = get_str_field(data, "author", "<неизвестный автор>")
         branch = get_str_field(data, "branch", "<неизвестная ветка>")
-        status = get_str_field(data, "status", "<нет статуса>")
+        status = add_status_emoji(get_str_field(data, "status", "<нет статуса>"))
         commit = get_str_field(data, "commit", "")[:7] or "<нет коммита>"
         commit_msg = get_str_field(data, "message", "—").splitlines()[0]
         event_name = get_str_field(data, "event_name", "<неизвестное событие>")
@@ -62,8 +72,12 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
 
         try:
             await bot.send_message(
-                chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=markup
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=markup,
             )
+            logger.info(f"Отчёт о CI отправлен: {project} | {branch} | {status}")
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения в Telegram: {e}")
             raise HTTPException(status_code=500, detail="Ошибка при отправке сообщения")
