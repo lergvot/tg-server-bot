@@ -1,10 +1,14 @@
-# system_report.py
 import asyncio
 import datetime
+import logging
 import platform
 import subprocess
 
 import psutil
+
+logger = logging.getLogger(__name__)
+
+SYSTEMCTL_PATH = "/usr/bin/systemctl"  # which systemctl
 
 
 def format_uptime(td):
@@ -24,9 +28,8 @@ def bytes_to_human_readable(num_bytes):
 
 def check_service(service_name):
     try:
-        # Явно указываем путь к systemctl
         result = subprocess.run(
-            ["systemctl", "is-active", service_name],
+            [SYSTEMCTL_PATH, "is-active", service_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -36,6 +39,7 @@ def check_service(service_name):
             status = result.stderr.strip()
         return f"{service_name}: {status}"
     except Exception as e:
+        logger.error(f"Ошибка при проверке сервиса {service_name}: {e}")
         return f"{service_name}: Error ({e})"
 
 
@@ -50,7 +54,6 @@ async def main(tgkey=None, chatID=None):
         disk = psutil.disk_usage("/")
         swap = psutil.swap_memory()
 
-        # Network usage
         net1 = psutil.net_io_counters()
         await asyncio.sleep(1)
         net2 = psutil.net_io_counters()
@@ -58,7 +61,6 @@ async def main(tgkey=None, chatID=None):
         bytes_recv = net2.bytes_recv - net1.bytes_recv
         net_usage = f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | ⬇️ {bytes_to_human_readable(bytes_recv)}/s"
 
-        # Алерты
         alerts = []
         if cpu_percent > 85:
             alerts.append("⚠️ High CPU usage!")
@@ -69,8 +71,6 @@ async def main(tgkey=None, chatID=None):
 
         alert_text = "\n".join(alerts) if alerts else "✅ System health is OK"
 
-        # --- Фикс топа процессов по CPU ---
-        # Первый проход для инициализации cpu_percent
         for p in psutil.process_iter():
             try:
                 p.cpu_percent(interval=None)
@@ -83,22 +83,16 @@ async def main(tgkey=None, chatID=None):
                 procs.append(p)
             except Exception:
                 pass
-        top_procs = sorted(
-            procs,
-            key=lambda p: p.info["cpu_percent"],
-            reverse=True,
-        )[:3]
+        top_procs = sorted(procs, key=lambda p: p.info["cpu_percent"], reverse=True)[:3]
 
         proc_info = "\n".join(
             f"— *{p.info['name'] or 'Unknown'}* (PID `{p.info['pid']}`): `{p.info['cpu_percent']}%` CPU, `{p.info['memory_percent']:.1f}%` RAM"
             for p in top_procs
         )
 
-        # Статус сервисов
         services_to_check = ["ssh", "nginx", "docker"]
         services_status = "\n".join(check_service(s) for s in services_to_check)
 
-        # Финальное сообщение
         message = (
             "🖥️ *Server Report*\n"
             "========================\n"
@@ -122,9 +116,11 @@ async def main(tgkey=None, chatID=None):
             f"{services_status}\n"
             "========================"
         )
+        logger.info("System report успешно сформирован.")
         return message
+
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logger.error(f"Ошибка при формировании system report: {e}")
         return "Ошибка при формировании отчёта."
 
 
