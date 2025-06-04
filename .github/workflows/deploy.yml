@@ -66,6 +66,26 @@ jobs:
             pip install -r requirements.txt --no-cache-dir
             systemctl restart tgbot.service
             echo "Deployment completed"
+            
+      - name: Wait for FastAPI to be healthy
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.HOST }}
+          port: ${{ secrets.PORT }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "⏳ Проверка запуска FastAPI (http://127.0.0.1:8001/health)..."
+            for i in {1..15}; do
+              sleep 2
+              if curl -s --fail http://127.0.0.1:8001/health > /dev/null; then
+                echo "✅ FastAPI запущен и отвечает на /health"
+                exit 0
+              fi
+              echo "⏳ Ожидаем /health... ($i/15)"
+            done
+            echo "❌ FastAPI не запустился вовремя"
+            exit 1
 
       - name: Set CI status env
         run: echo "STATUS=✅ Успешно" >> $GITHUB_ENV
