@@ -13,43 +13,33 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
         if data.get("secret") != ci_secret:
             raise HTTPException(status_code=403, detail="Forbidden")
 
-        defaults = {
-            "project": "<неизвестный проект>",
-            "workflow": "<неизвестный workflow>",
-            "author": "<неизвестный автор>",
-            "branch": "<неизвестная ветка>",
-            "status": "<нет статуса>",
-            "commit": "<нет коммита>",
-            "message": "—",
-            "event_name": "<неизвестное событие>",
-            "url": "https://example.com",
-            "repo_url": "https://example.com",
-        }
+        def get_value(field: str, fallback: str) -> str:
+            value = data.get(field)
+            if isinstance(value, str):
+                value = value.strip()
+                return value or fallback
 
-        project = data.get("project") or defaults["project"]
-        workflow = data.get("workflow")
-        author = data.get("author") or defaults["author"]
-        branch = data.get("branch") or defaults["branch"]
-        status = data.get("status") or defaults["status"]
-        commit = (data.get("commit") or "")[:7] or defaults["commit"]
-        commit_msg = data.get("message") or defaults["message"]
-        if isinstance(commit_msg, str):
-            commit_msg = commit_msg.strip()
-        event_name = data.get("event_name") or defaults["event_name"]
-
-        url = data.get("url") or defaults["url"]
-        repo_url = data.get("repo_url") or defaults["repo_url"]
+        project = get_value("project", "<неизвестный проект>")
+        workflow = get_value("workflow", "<неизвестный workflow>")
+        author = get_value("author", "<неизвестный автор>")
+        branch = get_value("branch", "<неизвестная ветка>")
+        status = get_value("status", "<нет статуса>")
+        commit = get_value("commit", "")[:7] or "<нет коммита>"
+        commit_msg = get_value("message", "—").splitlines()[0]
+        event_name = get_value("event_name", "<неизвестное событие>")
+        url = get_value("url", "https://example.com")
+        repo_url = get_value("repo_url", "https://example.com")
 
         text = (
-            f"🛰 *CI-деплой завершён!*\n\n"
-            f"*📦 Проект:* `{project}`\n"
-            f"*🛠 Workflow:* `{workflow}`\n"
-            f"*👤 Автор:* {author}\n"
-            f"*🌿 Ветка:* `{branch}`\n"
-            f"*📊 Статус:* {status}\n"
-            f"*🔢 Коммит:* `{commit}`\n"
-            f"*📝 Сообщение:* {commit_msg}\n"
-            f"*⚙️ Событие:* `{event_name}`"
+            f"🛰 <b>CI-деплой завершён!</b>\n\n"
+            f"<b>📦 Проект:</b> <code>{project}</code>\n"
+            f"<b>🛠 Workflow:</b> <code>{workflow}</code>\n"
+            f"<b>👤 Автор:</b> {author}\n"
+            f"<b>🌿 Ветка:</b> <code>{branch}</code>\n"
+            f"<b>📊 Статус:</b> {status}\n"
+            f"<b>🔢 Коммит:</b> <code>{commit}</code>\n"
+            f"<b>📝 Сообщение:</b> {commit_msg}\n"
+            f"<b>⚙️ Событие:</b> <code>{event_name}</code>"
         )
 
         buttons = [
