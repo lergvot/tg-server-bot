@@ -5,9 +5,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches: 
-      - main
 
 jobs:
   test:
@@ -81,6 +78,7 @@ jobs:
       - name: Prepare CI payload
         id: prepare_payload
         run: |
+          sleep 10
           echo "Creating JSON payload for CI report"
           echo '{
             "secret": "'"${{ secrets.CI_SECRET }}"'",
