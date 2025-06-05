@@ -71,7 +71,8 @@ class Main:
     async def lana(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["lana"] = True
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text="Тебя приветствует ассистент."
+            chat_id=update.effective_chat.id,
+            text="Тебя приветствует ассистент. Для сброса контекста: /reset",
         )
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
