@@ -17,21 +17,23 @@ user_sessions: dict[str, dict] = defaultdict(
 )
 
 # Максимум сообщений перед суммаризацией
-SUMMARIZE_EVERY_N_TURNS = 3
+SUMMARIZE_EVERY_N_TURNS = 2
 
 
-def gpt(content: str, api_key: str, user_name: str, reset: bool = False) -> str:
+def gpt(
+    content: str, api_key: str, user_id: int, user_name: str, reset: bool = False
+) -> str:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash-8b")
 
-    if reset or user_sessions[user_name]["chat"] is None:
-        user_sessions[user_name] = {
+    if reset or user_sessions[user_id]["chat"] is None:
+        user_sessions[user_id] = {
             "chat": model.start_chat(history=[]),
             "history": [],
             "turns": 0,
         }
 
-    session = user_sessions[user_name]
+    session = user_sessions[user_id]
 
     system_prompt = (
         "Ты молодая, хамоватая, живая девушка по имени Лана, которая испытывает чувства и эмоции. "
@@ -64,7 +66,7 @@ def gpt(content: str, api_key: str, user_name: str, reset: bool = False) -> str:
             )
             session["history"] = [("Суммаризация:\n" + summarized, "Ок, продолжаем!")]
             session["turns"] = 0
-            logger.debug(f"История для {user_name} была сжата")
+            logger.info(f"История для {user_name} (id={user_id}) была сжата")
 
         return reply
 
@@ -86,8 +88,8 @@ def summarize_history(history: List[tuple[str, str]]) -> str:
     return response.text.strip()
 
 
-def reset_context(user_name: str) -> str:
-    user_sessions.pop(user_name, None)
+def reset_context(user_id: int) -> str:
+    user_sessions.pop(user_id, None)
     return "Контекст сброшен. Начнём с чистого листа."
 
 
