@@ -56,10 +56,16 @@ def gpt(content: str, api_key: str, user_name: str, reset: bool = False) -> str:
         # Суммаризация каждые N сообщений
         if session["turns"] >= SUMMARIZE_EVERY_N_TURNS:
             summarized = summarize_history(session["history"])
-            session["chat"] = model.start_chat(history=[summarized])
-            session["history"] = [(f"Суммаризация:\n{summarized}", "Ок, продолжаем!")]
+            session["chat"] = model.start_chat(
+                history=[
+                    {"role": "user", "parts": f"Суммаризация:\n{summarized}"},
+                    {"role": "model", "parts": "Ок, продолжаем!"},
+                ]
+            )
+            session["history"] = [("Суммаризация:\n" + summarized, "Ок, продолжаем!")]
             session["turns"] = 0
             logger.debug(f"История для {user_name} была сжата")
+
         return reply
 
     except Exception as e:
