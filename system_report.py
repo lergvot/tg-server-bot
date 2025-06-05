@@ -7,7 +7,7 @@ import subprocess
 
 import psutil
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("system_report")
 
 SYSTEMCTL_PATH = "/usr/bin/systemctl"  # which systemctl
 

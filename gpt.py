@@ -5,7 +5,7 @@ from typing import List
 
 import google.generativeai as genai
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("chat")
 
 # Глобальный хранилище чатов по пользователям
 user_sessions: dict[str, dict] = defaultdict(
