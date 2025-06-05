@@ -103,16 +103,17 @@ class Main:
     async def echo_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        user = update.effective_user.first_name
+        user_id = update.effective_user.id
+        user_name = update.effective_user.first_name
         text = update.message.text
-        logger.info(f"Пользователь {user} написал: {text}")
+        logger.info(f"Пользователь {user_name} написал: {text}")
 
         if context.user_data.get("lana"):
             try:
                 loop = asyncio.get_running_loop()
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     gpt_answer = await loop.run_in_executor(
-                        executor, gpt, text, api_key, user
+                        executor, gpt, text, api_key, user_id, user_name
                     )
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id, text=str(gpt_answer)
