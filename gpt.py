@@ -85,6 +85,7 @@ def summarize_history(history: List[tuple[str, str]]) -> str:
     summarizer = genai.GenerativeModel("gemini-1.5-flash-8b")
     chat = summarizer.start_chat()
     response = chat.send_message(summary_prompt + dialog)
+    logger.info(f"Сжатая история: {response.text.strip()}")
     return response.text.strip()
 
 
