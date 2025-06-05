@@ -60,6 +60,7 @@ def gpt(content: str, api_key: str, user_name: str, reset: bool = False) -> str:
             session["history"] = [(f"Суммаризация:\n{summarized}", "Ок, продолжаем!")]
             session["turns"] = 0
             logger.debug(f"История для {user_name} была сжата")
+            return reply
 
     except Exception as e:
         logger.error(f"Ошибка в gpt: {e}")
