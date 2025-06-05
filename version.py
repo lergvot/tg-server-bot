@@ -1,2 +1,2 @@
 # version.py
-version = "0.75"
+version = "0.82"
