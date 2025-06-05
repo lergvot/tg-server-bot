@@ -1,3 +1,4 @@
+# bot.py
 import asyncio
 import concurrent.futures
 import logging
@@ -51,7 +52,7 @@ httpx_logger.setLevel(logging.WARNING)
 # Импорт модулей
 try:
     from CI_report import create_bot_server
-    from gpt import gpt
+    from gpt import gpt, reset_context
     from system_report import main as report
 except ImportError as e:
     logger.error(f"Ошибка импорта модулей: {e}")
@@ -88,6 +89,15 @@ class Main:
                 chat_id=update.effective_chat.id, text="Произошла ошибка при отчёте."
             )
             logger.error(f"Ошибка в system_report: {str(e)}")
+
+    async def reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.effective_user.id
+        reset_context(user_id)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🧹 Контекст общения успешно сброшен.",
+        )
+        logger.info(f"Контекст сброшен для пользователя {user_id}")
 
     async def echo_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -141,6 +151,7 @@ def main_func():
     application.add_handler(CommandHandler("start", main_handler.start))
     application.add_handler(CommandHandler("chat", main_handler.lana))
     application.add_handler(CommandHandler("status", main_handler.status))
+    application.add_handler(CommandHandler("reset", main_handler.reset))
     application.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), main_handler.echo_message)
     )
