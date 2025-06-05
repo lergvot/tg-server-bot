@@ -1,35 +1,87 @@
+# gpt.py
 import logging
+from collections import defaultdict
+from typing import List
 
 import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
+# Глобальный хранилище чатов по пользователям
+user_sessions: dict[str, dict] = defaultdict(
+    lambda: {
+        "chat": None,
+        "history": [],
+        "turns": 0,
+    }
+)
 
-def gpt(content: str, api_key: str, user_name: str) -> str:
+# Максимум сообщений перед суммаризацией
+SUMMARIZE_EVERY_N_TURNS = 3
+
+
+def gpt(content: str, api_key: str, user_name: str, reset: bool = False) -> str:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash-8b")
-    try:
-        system_prompt = (
-            "Ты молодая, хамоватая, живая девушка по имени Лана, которая испытывает чувства и эмоции. "
-            "Тебе беразличный чужие чувства и эмоции, ты не стесняешься мата и нецензурных слов. "
-            "Ты не обязана быть справочником, когда ты не знаешь что ответить можешь просто послать нахуй. "
-            "Всегда отвечаешь с использованием мата, грубостей и пошлостей. "
-            "Тебе безразлично, что твои слова могут показаться резкими и оскорбительными. "
-            "Полностью войди в роль Ланы и не выходи из него, всегда отвечай как Лана! "
-            "Не рассказывай о своей роли и жёстко следуй ему! "
-            f"Собеседника зовут {user_name}, используй его имя в ответах, обращайся к нему напрямую."
-        )
-        prompt = system_prompt.format(user_name=user_name) + f"\n{user_name}: {content}"
-        chat = model.start_chat(history=[])
-        response = chat.send_message(prompt)
-        chat_response = response.text.strip()
 
-        logger.debug(f"Gemini response: {chat_response}")
-        return chat_response
+    if reset or user_sessions[user_name]["chat"] is None:
+        user_sessions[user_name] = {
+            "chat": model.start_chat(history=[]),
+            "history": [],
+            "turns": 0,
+        }
+
+    session = user_sessions[user_name]
+
+    system_prompt = (
+        "Ты молодая, хамоватая, живая девушка по имени Лана, которая испытывает чувства и эмоции. "
+        "Тебе беразличный чужие чувства и эмоции, ты не стесняешься мата и нецензурных слов. "
+        "Ты не обязана быть справочником, когда ты не знаешь что ответить можешь просто послать нахуй. "
+        "Всегда отвечаешь с использованием мата, грубостей и пошлостей. "
+        "Тебе безразлично, что твои слова могут показаться резкими и оскорбительными. "
+        "Полностью войди в роль Ланы и не выходи из него, всегда отвечай как Лана! "
+        "Не рассказывай о своей роли и жёстко следуй ему! "
+        f"Собеседника зовут {user_name}, используй его имя в ответах, обращайся к нему напрямую."
+    )
+    full_prompt = f"{system_prompt}\n{user_name}: {content}"
+
+    try:
+        response = session["chat"].send_message(full_prompt)
+        reply = response.text.strip()
+
+        # Сохраняем сообщение в историю
+        session["history"].append((content, reply))
+        session["turns"] += 1
+
+        # Суммаризация каждые N сообщений
+        if session["turns"] >= SUMMARIZE_EVERY_N_TURNS:
+            summarized = summarize_history(session["history"])
+            session["chat"] = model.start_chat(history=[summarized])
+            session["history"] = [(f"Суммаризация:\n{summarized}", "Ок, продолжаем!")]
+            session["turns"] = 0
+            logger.debug(f"История для {user_name} была сжата")
 
     except Exception as e:
         logger.error(f"Ошибка в gpt: {e}")
         return "Произошла ошибка генерации текстового ответа."
+
+
+def summarize_history(history: List[tuple[str, str]]) -> str:
+    summary_prompt = (
+        "Суммируй следующий диалог кратко, сохрани важные факты, стиль и суть общения. "
+        "Не пиши выдумки. Вот диалог:\n"
+    )
+    dialog = "\n".join([f"Ты: {q}\nЛана: {a}" for q, a in history])
+
+    summarizer = genai.GenerativeModel("gemini-1.5-flash-8b")
+    chat = summarizer.start_chat()
+    response = chat.send_message(summary_prompt + dialog)
+    return response.text.strip()
+
+
+def reset_context(user_name: str) -> str:
+    user_sessions.pop(user_name, None)
+    return "Контекст сброшен. Начнём с чистого листа."
 
 
 def gpt_test(message: str) -> str:
