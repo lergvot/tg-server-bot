@@ -51,8 +51,8 @@ httpx_logger.setLevel(logging.WARNING)
 
 # Импорт модулей
 try:
-    from CI_report import create_bot_server
     from chat import gpt, reset_context
+    from CI_report import create_bot_server
     from system_report import main as report
 except ImportError as e:
     logger.error(f"Ошибка импорта модулей: {e}")
