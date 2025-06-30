@@ -64,7 +64,7 @@ jobs:
             [ -f tg_bot.log ] && rm tg_bot.log
             
             # Синхронизация последних изменений
-            git fetch origin main
+            git fetch origin main --force
             git reset --hard origin/main
             git clean -fd
             
