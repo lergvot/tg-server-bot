@@ -64,27 +64,24 @@ jobs:
             [ -f tg_bot.log ] && rm tg_bot.log
             
             # Синхронизация последних изменений
-            git fetch --all
+            git fetch origin main
             git reset --hard origin/main
             git clean -fd
             
-            # Обновление зависимостей
-            if [ -d "venv" ]; then
-              source venv/bin/activate
-              python -m pip install --upgrade pip
-              pip install -r requirements.txt --no-cache-dir
-            else
-              echo "Создание нового venv"
-              python -m venv venv
-              source venv/bin/activate
-              pip install --upgrade pip setuptools wheel
-              pip install -r requirements.txt
+            # Создание venv (если не существует)
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
             fi
+
+            # Активация и обновление
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
             
             # Перезапуск сервиса
             systemctl daemon-reload
             systemctl start tgbot.service
-            systemctl status tgbot.service --no-pager
+            echo "✅ Clean deployment completed"
             
       - name: Wait for FastAPI to be healthy
         uses: appleboy/ssh-action@v0.1.10
