@@ -52,7 +52,7 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
         repo_url = get_str_field(data, "repo_url", "https://example.com")
 
         text = (
-            f"🛰 <b>CI-деплой завершён!</b>\n\n"
+            f"🛰 <b>CI-Отчёт</b>\n\n"
             f"<b>📦 Проект:</b> <code>{project}</code>\n"
             f"<b>🛠 Workflow:</b> <code>{workflow}</code>\n"
             f"<b>👤 Автор:</b> {author}\n"

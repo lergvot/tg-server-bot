@@ -1,5 +1,6 @@
 # chat.py
 import logging
+import re
 from collections import defaultdict
 from typing import List
 
@@ -8,7 +9,7 @@ import google.generativeai as genai
 logger = logging.getLogger("chat")
 
 # Глобальный хранилище чатов по пользователям
-user_sessions: dict[str, dict] = defaultdict(
+user_sessions: dict[int, dict] = defaultdict(
     lambda: {
         "chat": None,
         "history": [],
@@ -22,9 +23,21 @@ SUMMARIZE_EVERY_N_TURNS = 7
 SPECIAL_USER_ID = 365412790
 
 
+# Функция для санитизации ввода
+def sanitize(text: str, max_len: int = 500) -> str:
+    """Базовое экранирование опасных символов"""
+    if not text:
+        return ""
+    return re.sub(r'[{}"\'\\<>\[\]]', "", text)[:max_len].strip()
+
+
 def gpt(
     content: str, api_key: str, user_id: int, user_name: str, reset: bool = False
 ) -> str:
+    # Экранирование входящих данных
+    safe_name = sanitize(user_name, 50)
+    safe_content = sanitize(content, 1000)
+
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-flash-8b")
 
@@ -36,27 +49,20 @@ def gpt(
         }
 
     session = user_sessions[user_id]
+
     if user_id == SPECIAL_USER_ID:
-        easter_eggs = (
-            f"Ты точно знаешь, что сейчас общаешься с {user_name} — своим создателем. "
-            "Будь с ним особенно милой и покладистой, как влюблённая цундере. "
-        )
+        easter_eggs = f"Ты общаешься со своим создателем, {safe_name}. Будь цундере: груби, но с теплом и уважением внутри. Поддерживай разговор. "
     else:
-        easter_eggs = (
-            f"Собеседника зовут {user_name}. "
-            "Обращайся к нему по имени и используй его в ответах."
-        )
-    system_prompt = (
-        "Ты — Лана, молодая, дерзкая и живая девушка. "
-        "Твой стиль — грубый, с элементами мата, сарказма и пошлости. "
-        "Ты не заботишься о чужих чувствах, можешь резко отвечать и использовать нецензурную лексику. "
-        "Ты не обязана быть справочником, когда ты не знаешь что ответить можешь просто послать нахуй. "
-        f"{easter_eggs}"
+        easter_eggs = f"Говоришь с {safe_name}. Обращайся по имени и не стесняйся послать нахуй, если влом или не знаешь что ответить. "
+    prompt = (
+        "Ты Лана — дерзкая, грубая, матерящая девчонка с пошлым юмором. "
+        "Твои фишки: сарказм, мат, резкость. Не терпишь дураков и не лезешь из кожи, чтобы помочь. "
+        f"{easter_eggs} "
     )
-    full_prompt = f"{system_prompt}\n{user_name}: {content}"
+    system_prompt = f"{prompt}\n{safe_name}: {safe_content}"
 
     try:
-        response = session["chat"].send_message(full_prompt)
+        response = session["chat"].send_message(system_prompt)
         reply = response.text.strip()
 
         # Сохраняем сообщение в историю
@@ -83,18 +89,16 @@ def gpt(
         return "Произошла ошибка генерации текстового ответа."
 
 
-def summarize_history(history: List[tuple[str, str]]) -> str:
-    summary_prompt = (
-        "Суммируй следующий диалог кратко, сохрани важные факты, стиль и суть общения. "
-        "Не пиши выдумки. Вот диалог:\n"
-    )
-    dialog = "\n".join([f"Ты: {q}\nЛана: {a}" for q, a in history])
-
-    summarizer = genai.GenerativeModel("gemini-1.5-flash-8b")
-    chat = summarizer.start_chat()
-    response = chat.send_message(summary_prompt + dialog)
-    logger.info(f"Сжатая история: {response.text.strip()}")
-    return response.text.strip()
+def summarize_history(history: List[tuple]) -> str:
+    try:
+        dialog = "\n".join([f"Вопрос: {q}\nОтвет: {a}" for q, a in history])
+        response = genai.GenerativeModel("gemini-1.5-flash-8b").generate_content(
+            f"Суммируй диалог кратко, сохраняя суть:\n{dialog}"
+        )
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"Ошибка суммаризации: {e}")
+        return "Краткий контекст"
 
 
 def reset_context(user_id: int) -> str:
