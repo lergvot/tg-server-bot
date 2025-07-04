@@ -66,8 +66,8 @@ jobs:
             # Синхронизация последних изменений
             git fetch origin main --force
             git reset --hard origin/main
-            git clean -fd
-            
+            git clean -fdx
+
             # Создание venv (если не существует)
             if [ ! -d "venv" ]; then
               python3 -m venv venv
