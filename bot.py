@@ -52,7 +52,7 @@ httpx_logger.setLevel(logging.WARNING)
 # Импорт модулей
 try:
     from chat import gpt, reset_context
-    from CI_report import create_bot_server
+    from CI_report import create_bot_server, get_last_deploy_report
     from system_report import main as report
 except ImportError as e:
     logger.error(f"Ошибка импорта модулей: {e}")
@@ -130,6 +130,22 @@ class Main:
             )
             logger.info("Получено сообщение вне активного режима.")
 
+    async def lastdeploy(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        report = get_last_deploy_report()
+        if report:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=report,
+                parse_mode="HTML",
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Нет данных о последнем деплое в main.",
+            )
+
 
 # Запуск FastAPI и Telegram
 async def run_fastapi():
@@ -154,6 +170,7 @@ def main_func():
     application.add_handler(CommandHandler("chat", main_handler.lana))
     application.add_handler(CommandHandler("status", main_handler.status))
     application.add_handler(CommandHandler("reset", main_handler.reset))
+    application.add_handler(CommandHandler("lastdeploy", main_handler.lastdeploy))
     application.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), main_handler.echo_message)
     )

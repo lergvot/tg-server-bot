@@ -5,6 +5,14 @@ from fastapi import FastAPI, HTTPException, Request
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 
+# Глобальная переменная для хранения последнего деплоя
+_last_deploy_report = None
+
+
+def get_last_deploy_report():
+    return _last_deploy_report
+
+
 def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
     app = FastAPI()
     bot = Bot(token=tg_token)
@@ -79,6 +87,12 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
                 reply_markup=markup,
             )
             logger.info(f"Отчёт о CI отправлен: {project} | {branch} | {status}")
+
+            # Сохраняем последний деплой в main с успешным статусом
+            if branch == "main" and "✅" in status:
+                global _last_deploy_report
+                _last_deploy_report = text
+
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения в Telegram: {e}")
             raise HTTPException(status_code=500, detail="Ошибка при отправке сообщения")
