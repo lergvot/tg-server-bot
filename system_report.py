@@ -35,21 +35,21 @@ def check_service(service_name):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=5
+            timeout=5,
         )
         status = result.stdout.strip()
         if not status:
             status = result.stderr.strip()
-        
+
         # Перевод статусов на русский
         status_translations = {
             "active": "активен",
             "inactive": "неактивен",
             "failed": "ошибка",
             "activating": "запускается",
-            "deactivating": "останавливается"
+            "deactivating": "останавливается",
         }
-        
+
         translated_status = status_translations.get(status, status)
         return f"{service_name}: {translated_status}"
     except subprocess.TimeoutExpired:
@@ -63,13 +63,13 @@ async def get_docker_containers():
     """Получить информацию о работающих Docker контейнерах"""
     try:
         result = subprocess.run(
-            ["docker", "ps", "--format", "{{.Names}}|{{.Status}}|{{.ID}}"],
+            ["/usr/bin/docker", "ps", "--format", "{{.Names}}|{{.Status}}|{{.ID}}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=10
+            timeout=10,
         )
-        
+
         if result.returncode != 0:
             if "command not found" in result.stderr:
                 return "Docker не установлен"
@@ -77,24 +77,22 @@ async def get_docker_containers():
                 return "Docker не запущен"
             else:
                 return f"Ошибка Docker: {result.stderr.strip()}"
-        
+
         containers = []
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line.strip():
-                parts = line.split('|')
+                parts = line.split("|")
                 if len(parts) >= 2:
                     name = parts[0]
                     status = parts[1]
                     container_id = parts[2] if len(parts) > 2 else "N/A"
-                    containers.append(
-                        f"• {name}: {status} (ID: {container_id[:12]})"
-                    )
-        
+                    containers.append(f"• {name}: {status} (ID: {container_id[:12]})")
+
         if not containers:
             return "Нет работающих контейнеров"
-        
+
         return "\n".join(containers)
-        
+
     except subprocess.TimeoutExpired:
         return "Таймаут запроса к Docker"
     except Exception as e:
@@ -107,7 +105,7 @@ async def main(tgkey=None, chatID=None):
     try:
         # Получение базовой информации о системе
         uname = platform.uname()
-        
+
         # Получение времени загрузки и аптайма
         try:
             boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
@@ -129,20 +127,20 @@ async def main(tgkey=None, chatID=None):
             mem = psutil.virtual_memory()
         except Exception as e:
             logger.error(f"Ошибка при получении информации о памяти: {e}")
-            mem = type('obj', (object,), {'percent': 'N/A', 'used': 0})()
-        
+            mem = type("obj", (object,), {"percent": "N/A", "used": 0})()
+
         try:
             swap = psutil.swap_memory()
         except Exception as e:
             logger.error(f"Ошибка при получении информации о swap: {e}")
-            swap = type('obj', (object,), {'percent': 'N/A', 'used': 0})()
+            swap = type("obj", (object,), {"percent": "N/A", "used": 0})()
 
         # Получение информации о диске
         try:
             disk = psutil.disk_usage("/")
         except Exception as e:
             logger.error(f"Ошибка при получении информации о диске: {e}")
-            disk = type('obj', (object,), {'percent': 'N/A', 'used': 0})()
+            disk = type("obj", (object,), {"percent": "N/A", "used": 0})()
 
         # Получение сетевой статистики
         net_usage = "N/A"
@@ -152,8 +150,10 @@ async def main(tgkey=None, chatID=None):
             net2 = psutil.net_io_counters()
             bytes_sent = net2.bytes_sent - net1.bytes_sent
             bytes_recv = net2.bytes_recv - net1.bytes_recv
-            net_usage = (f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | "
-                         f"⬇️ {bytes_to_human_readable(bytes_recv)}/s")
+            net_usage = (
+                f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | "
+                f"⬇️ {bytes_to_human_readable(bytes_recv)}/s"
+            )
         except Exception as e:
             logger.error(f"Ошибка при получении сетевой статистики: {e}")
 
@@ -202,9 +202,7 @@ async def main(tgkey=None, chatID=None):
             logger.error(f"Ошибка при получении информации о процессах: {e}")
 
         # Проверка статуса сервисов
-        services_to_check = [
-            "ssh", "nginx", "docker"
-        ]
+        services_to_check = ["ssh", "nginx", "docker"]
         services_status = "\n".join(check_service(s) for s in services_to_check)
 
         # Формирование сообщения
