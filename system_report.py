@@ -28,101 +28,221 @@ def bytes_to_human_readable(num_bytes):
 
 
 def check_service(service_name):
+    """Проверить статус системного сервиса"""
     try:
         result = subprocess.run(
             [SYSTEMCTL_PATH, "is-active", service_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=5
         )
         status = result.stdout.strip()
         if not status:
             status = result.stderr.strip()
-        return f"{service_name}: {status}"
+        
+        # Перевод статусов на русский
+        status_translations = {
+            "active": "активен",
+            "inactive": "неактивен",
+            "failed": "ошибка",
+            "activating": "запускается",
+            "deactivating": "останавливается"
+        }
+        
+        translated_status = status_translations.get(status, status)
+        return f"{service_name}: {translated_status}"
+    except subprocess.TimeoutExpired:
+        return f"{service_name}: таймаут проверки"
     except Exception as e:
         logger.error(f"Ошибка при проверке сервиса {service_name}: {e}")
-        return f"{service_name}: Error ({e})"
+        return f"{service_name}: ошибка ({str(e)[:30]})"
+
+
+async def get_docker_containers():
+    """Получить информацию о работающих Docker контейнерах"""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}|{{.Status}}|{{.ID}}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode != 0:
+            if "command not found" in result.stderr:
+                return "Docker не установлен"
+            elif "Cannot connect" in result.stderr:
+                return "Docker не запущен"
+            else:
+                return f"Ошибка Docker: {result.stderr.strip()}"
+        
+        containers = []
+        for line in result.stdout.strip().split('\n'):
+            if line.strip():
+                parts = line.split('|')
+                if len(parts) >= 2:
+                    name = parts[0]
+                    status = parts[1]
+                    container_id = parts[2] if len(parts) > 2 else "N/A"
+                    containers.append(
+                        f"• {name}: {status} (ID: {container_id[:12]})"
+                    )
+        
+        if not containers:
+            return "Нет работающих контейнеров"
+        
+        return "\n".join(containers)
+        
+    except subprocess.TimeoutExpired:
+        return "Таймаут запроса к Docker"
+    except Exception as e:
+        logger.error(f"Ошибка при получении Docker контейнеров: {e}")
+        return f"Ошибка: {str(e)}"
 
 
 async def main(tgkey=None, chatID=None):
+    """Основная функция для формирования системного отчета"""
     try:
+        # Получение базовой информации о системе
         uname = platform.uname()
-        boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.datetime.now() - boot_time
+        
+        # Получение времени загрузки и аптайма
+        try:
+            boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+            uptime = datetime.datetime.now() - boot_time
+        except Exception as e:
+            logger.error(f"Ошибка при получении времени загрузки: {e}")
+            boot_time = "N/A"
+            uptime = "N/A"
 
-        cpu_percent = psutil.cpu_percent(interval=1)
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        swap = psutil.swap_memory()
+        # Получение информации о CPU
+        try:
+            cpu_percent = psutil.cpu_percent(interval=1)
+        except Exception as e:
+            logger.error(f"Ошибка при получении нагрузки CPU: {e}")
+            cpu_percent = "N/A"
 
-        net1 = psutil.net_io_counters()
-        await asyncio.sleep(1)
-        net2 = psutil.net_io_counters()
-        bytes_sent = net2.bytes_sent - net1.bytes_sent
-        bytes_recv = net2.bytes_recv - net1.bytes_recv
-        net_usage = f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | ⬇️ {bytes_to_human_readable(bytes_recv)}/s"
+        # Получение информации о памяти
+        try:
+            mem = psutil.virtual_memory()
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации о памяти: {e}")
+            mem = type('obj', (object,), {'percent': 'N/A', 'used': 0})()
+        
+        try:
+            swap = psutil.swap_memory()
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации о swap: {e}")
+            swap = type('obj', (object,), {'percent': 'N/A', 'used': 0})()
 
+        # Получение информации о диске
+        try:
+            disk = psutil.disk_usage("/")
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации о диске: {e}")
+            disk = type('obj', (object,), {'percent': 'N/A', 'used': 0})()
+
+        # Получение сетевой статистики
+        net_usage = "N/A"
+        try:
+            net1 = psutil.net_io_counters()
+            await asyncio.sleep(1)
+            net2 = psutil.net_io_counters()
+            bytes_sent = net2.bytes_sent - net1.bytes_sent
+            bytes_recv = net2.bytes_recv - net1.bytes_recv
+            net_usage = (f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | "
+                         f"⬇️ {bytes_to_human_readable(bytes_recv)}/s")
+        except Exception as e:
+            logger.error(f"Ошибка при получении сетевой статистики: {e}")
+
+        # Получаем информацию о Docker контейнерах
+        docker_info = await get_docker_containers()
+
+        # Проверка состояния системы
         alerts = []
-        if cpu_percent > 85:
-            alerts.append("⚠️ High CPU usage!")
-        if mem.percent > 90:
-            alerts.append("⚠️ Memory usage critical!")
-        if disk.percent > 90:
-            alerts.append("⚠️ Disk space running low!")
+        if isinstance(cpu_percent, (int, float)) and cpu_percent > 85:
+            alerts.append("⚠️ Высокая нагрузка CPU!")
+        if isinstance(mem.percent, (int, float)) and mem.percent > 90:
+            alerts.append("⚠️ Критическое использование RAM!")
+        if isinstance(disk.percent, (int, float)) and disk.percent > 90:
+            alerts.append("⚠️ Мало места на диске!")
 
-        alert_text = "\n".join(alerts) if alerts else "✅ System health is OK"
+        alert_text = "\n".join(alerts) if alerts else "✅ Система в норме"
 
-        for p in psutil.process_iter():
-            try:
-                p.cpu_percent(interval=None)
-            except Exception:
-                pass
-        await asyncio.sleep(1)
-        procs = []
-        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
-            try:
-                procs.append(p)
-            except Exception:
-                pass
-        top_procs = sorted(procs, key=lambda p: p.info["cpu_percent"], reverse=True)[:3]
+        # Получение информации о процессах
+        proc_info = "Не удалось получить информацию о процессах"
+        try:
+            for p in psutil.process_iter():
+                try:
+                    p.cpu_percent(interval=None)
+                except Exception:
+                    pass
+            await asyncio.sleep(1)
+            procs = []
+            for p in psutil.process_iter(
+                ["pid", "name", "cpu_percent", "memory_percent"]
+            ):
+                try:
+                    procs.append(p)
+                except Exception:
+                    pass
+            top_procs = sorted(
+                procs, key=lambda p: p.info["cpu_percent"], reverse=True
+            )[:3]
 
-        proc_info = "\n".join(
-            f"— *{p.info['name'] or 'Unknown'}* (PID `{p.info['pid']}`): `{p.info['cpu_percent']}%` CPU, `{p.info['memory_percent']:.1f}%` RAM"
-            for p in top_procs
-        )
+            proc_info = "\n".join(
+                f"— *{p.info['name'] or 'Unknown'}* (PID `{p.info['pid']}`): "
+                f"`{p.info['cpu_percent']}%` ЦПУ, "
+                f"`{p.info['memory_percent']:.1f}%` ОЗУ"
+                for p in top_procs
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации о процессах: {e}")
 
-        services_to_check = ["ssh", "nginx", "docker"]
+        # Проверка статуса сервисов
+        services_to_check = [
+            "ssh", "nginx", "docker"
+        ]
         services_status = "\n".join(check_service(s) for s in services_to_check)
 
+        # Формирование сообщения
         message = (
-            "🖥️ *Server Report*\n"
+            "🖥️ *Отчет о состоянии сервера*\n"
             "========================\n"
-            f"• Hostname: `{uname.node}`\n"
-            f"• OS: `{uname.system} {uname.release}`\n"
-            f"• Boot Time: `{boot_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
-            f"• Uptime: `{format_uptime(uptime)}`\n"
+            f"• Хост: `{uname.node}`\n"
+            f"• ОС: `{uname.system} {uname.release}`\n"
+            f"• Время загрузки: `{boot_time if isinstance(boot_time, str) else boot_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+            f"• Аптайм: `{uptime if isinstance(uptime, str) else format_uptime(uptime)}`\n"
             "------------------------\n"
             f"*CPU*: `{cpu_percent}%`\n"
-            f"*RAM*: `{mem.percent}%` used ({bytes_to_human_readable(mem.used)})\n"
-            f"*Swap*: `{swap.percent}%` used ({bytes_to_human_readable(swap.used)})\n"
-            f"*Disk*: `{disk.percent}%` used ({bytes_to_human_readable(disk.used)})\n"
-            f"*Network*: {net_usage}\n"
+            f"*RAM*: `{mem.percent if hasattr(mem, 'percent') else 'N/A'}%` "
+            f"использовано ({bytes_to_human_readable(mem.used) if hasattr(mem, 'used') else 'N/A'})\n"
+            f"*Swap*: `{swap.percent if hasattr(swap, 'percent') else 'N/A'}%` "
+            f"использовано ({bytes_to_human_readable(swap.used) if hasattr(swap, 'used') else 'N/A'})\n"
+            f"*Диск*: `{disk.percent if hasattr(disk, 'percent') else 'N/A'}%` "
+            f"использовано ({bytes_to_human_readable(disk.used) if hasattr(disk, 'used') else 'N/A'})\n"
+            f"*Сеть*: {net_usage}\n"
             "------------------------\n"
-            f"*Status:*\n{alert_text}\n"
+            f"*Статус:*\n{alert_text}\n"
             "------------------------\n"
-            "*Top Processes:*\n"
+            "*Топ процессов:*\n"
             f"{proc_info}\n"
             "------------------------\n"
-            "*Services:*\n"
+            "*Сервисы:*\n"
             f"{services_status}\n"
+            "------------------------\n"
+            "*Docker контейнеры:*\n"
+            f"{docker_info}\n"
             "========================"
         )
-        logger.info("System report успешно сформирован.")
+        logger.info("Системный отчет успешно сформирован.")
         return message
 
     except Exception as e:
-        logger.error(f"Ошибка при формировании system report: {e}")
-        return "Ошибка при формировании отчёта."
+        logger.error(f"Ошибка при формировании системного отчета: {e}")
+        return "❌ Ошибка при формировании отчёта."
 
 
 if __name__ == "__main__":
