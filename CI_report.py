@@ -54,7 +54,10 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
         branch = get_str_field(data, "branch", "<неизвестная ветка>")
         status = add_status_emoji(get_str_field(data, "status", "<нет статуса>"))
         commit = get_str_field(data, "commit", "")[:7] or "<нет коммита>"
-        commit_msg = get_str_field(data, "message", "—").splitlines()[0]
+        commit_msg = get_str_field(data, "message", "—")
+        commit_msg = (
+            commit_msg.replace(":", ":\n", 1) if ":" in commit_msg else commit_msg
+        )
         event_name = get_str_field(data, "event_name", "<неизвестное событие>")
         url = get_str_field(data, "url", "https://example.com")
         repo_url = get_str_field(data, "repo_url", "https://example.com")
