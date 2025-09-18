@@ -190,12 +190,13 @@ async def main(tgkey=None, chatID=None):
                     pass
             top_procs = sorted(
                 procs, key=lambda p: p.info["cpu_percent"], reverse=True
-            )[:3]
+            )[:5]
 
             proc_info = "\n".join(
-                f"— *{p.info['name'] or 'Unknown'}* (PID `{p.info['pid']}`): "
-                f"`{p.info['cpu_percent']}%` ЦПУ, "
-                f"`{p.info['memory_percent']:.1f}%` ОЗУ"
+                f"— *{p.info['name']:<20}* "  # имя процесса, выравнивание по левому краю, 20 символов
+                f"(PID `{p.info['pid']:>5}`)  "  # PID, выравнивание по правому краю, 5 символов
+                f"CPU: `{p.info['cpu_percent']:>5.1f}%`  "  # CPU, выравнивание по правому краю, 5 символов
+                f"RAM: `{p.info['memory_percent']:>5.1f}%`"  # RAM, выравнивание по правому краю, 5 символов
                 for p in top_procs
             )
         except Exception as e:
@@ -211,21 +212,21 @@ async def main(tgkey=None, chatID=None):
             "========================\n"
             f"• Хост: `{uname.node}`\n"
             f"• ОС: `{uname.system} {uname.release}`\n"
-            f"• Время загрузки: `{boot_time if isinstance(boot_time, str) else boot_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+            f"• Дата запуска: `{boot_time if isinstance(boot_time, str) else boot_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
             f"• Аптайм: `{uptime if isinstance(uptime, str) else format_uptime(uptime)}`\n"
             "------------------------\n"
             f"*CPU*: `{cpu_percent}%`\n"
             f"*RAM*: `{mem.percent if hasattr(mem, 'percent') else 'N/A'}%` "
-            f"использовано ({bytes_to_human_readable(mem.used) if hasattr(mem, 'used') else 'N/A'})\n"
+            f" ({bytes_to_human_readable(mem.used) if hasattr(mem, 'used') else 'N/A'})\n"
             f"*Swap*: `{swap.percent if hasattr(swap, 'percent') else 'N/A'}%` "
-            f"использовано ({bytes_to_human_readable(swap.used) if hasattr(swap, 'used') else 'N/A'})\n"
+            f" ({bytes_to_human_readable(swap.used) if hasattr(swap, 'used') else 'N/A'})\n"
             f"*Диск*: `{disk.percent if hasattr(disk, 'percent') else 'N/A'}%` "
-            f"использовано ({bytes_to_human_readable(disk.used) if hasattr(disk, 'used') else 'N/A'})\n"
+            f" ({bytes_to_human_readable(disk.used) if hasattr(disk, 'used') else 'N/A'})\n"
             f"*Сеть*: {net_usage}\n"
             "------------------------\n"
             f"*Статус:*\n{alert_text}\n"
             "------------------------\n"
-            "*Топ процессов:*\n"
+            "*Процессы:*\n"
             f"{proc_info}\n"
             "------------------------\n"
             "*Сервисы:*\n"
