@@ -97,7 +97,7 @@ async def get_docker_containers():
                 parts = line.split("|")
                 if len(parts) >= 5:
                     name = parts[0]
-                    container_id = parts[1]
+                    container_id = parts[1][:12]
                     cpu_percent = parts[2].strip() or "-"
                     mem_usage = parts[3].strip() or "-"
                     mem_percent = parts[4].strip() or "-"
