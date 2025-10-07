@@ -49,7 +49,7 @@ def gpt(
     }
 
     model = genai.GenerativeModel(
-        "gemini-1.5-flash-8b", generation_config=generation_config
+        "gemini-2.5-flash-lite:generateContent", generation_config=generation_config
     )
 
     if reset or user_sessions[user_id]["chat"] is None:
