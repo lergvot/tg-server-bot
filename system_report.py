@@ -60,14 +60,20 @@ def check_service(service_name):
 
 
 async def get_docker_containers():
-    """Получить информацию о работающих Docker контейнерах"""
+    """Получаем информацию о работающих Docker контейнерах"""
     try:
         result = subprocess.run(
-            ["/usr/bin/docker", "ps", "--format", "{{.Names}}|{{.Status}}|{{.ID}}"],
+            [
+                "/usr/bin/docker",
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.Name}}|{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.RunningFor}}",
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=10,
+            timeout=15,
         )
 
         if result.returncode != 0:
@@ -76,17 +82,23 @@ async def get_docker_containers():
             elif "Cannot connect" in result.stderr:
                 return "Docker не запущен"
             else:
-                return f"Ошибка Docker: {result.stderr.strip()}"
+                return f"Ошибка Docker stats: {result.stderr.strip()}"
 
         containers = []
         for line in result.stdout.strip().split("\n"):
             if line.strip():
                 parts = line.split("|")
-                if len(parts) >= 2:
+                if len(parts) >= 6:
                     name = parts[0]
-                    status = parts[1]
-                    container_id = parts[2] if len(parts) > 2 else "N/A"
-                    containers.append(f"• {name}: {status} (ID: {container_id[:12]})")
+                    container_id = parts[1]
+                    cpu_percent = parts[2].strip()
+                    mem_usage = parts[3].strip()
+                    mem_percent = parts[4].strip()
+                    running_for = parts[5].strip()
+
+                    # Форматируем вывод
+                    container_info = f"• {name} ({container_id}), CPU: {cpu_percent}, RAM: {mem_usage} ({mem_percent}), {running_for}"
+                    containers.append(container_info)
 
         if not containers:
             return "Нет работающих контейнеров"
@@ -94,10 +106,10 @@ async def get_docker_containers():
         return "\n".join(containers)
 
     except subprocess.TimeoutExpired:
-        return "Таймаут запроса к Docker"
+        return "Таймаут запроса к Docker stats. Попробуйте снова."
     except Exception as e:
         logger.error(f"Ошибка при получении Docker контейнеров: {e}")
-        return f"Ошибка: {str(e)}"
+        return f"Ошибка получения статистики: {str(e)}\nПопробуйте повторить запрос."
 
 
 async def main(tgkey=None, chatID=None):

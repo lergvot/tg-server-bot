@@ -43,9 +43,9 @@ def gpt(
     # Model configuration
     generation_config = {
         "temperature": 0.8,  # Низкая температура для более точной сумаризации
-        "max_output_tokens": 300,  # Ограничение длины
-        # "top_p": 0.8,
-        # "top_k": 40,
+        "max_output_tokens": 200,  # Ограничение длины
+        "top_p": 0.8,
+        "top_k": 40,
     }
 
     model = genai.GenerativeModel(
@@ -109,7 +109,7 @@ def gpt(
 def summarize_history(history: List[tuple]) -> str:
     try:
         dialog = "\n".join([f"Вопрос: {q}\nОтвет: {a}" for q, a in history])
-        response = genai.GenerativeModel("gemini-1.5-flash-8b").generate_content(
+        response = genai.GenerativeModel("gemini-2.5-flash-lite").generate_content(
             f"Суммируй диалог кратко, сохраняя суть:\n{dialog}"
         )
         return response.text.strip()
