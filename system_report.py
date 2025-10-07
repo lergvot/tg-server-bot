@@ -10,7 +10,7 @@ import psutil
 
 logger = logging.getLogger("system_report")
 
-SYSTEMCTL_PATH = "/usr/bin/systemctl"  # which systemctl
+SYSTEMCTL_PATH = "/usr/bin/systemctl"
 
 
 def format_uptime(td):
@@ -49,7 +49,6 @@ def check_service(service_name):
         if not status:
             status = result.stderr.strip()
 
-        # Перевод статусов на русский
         status_translations = {
             "active": "активен",
             "inactive": "неактивен",
@@ -76,7 +75,7 @@ async def get_docker_containers():
                 "stats",
                 "--no-stream",
                 "--format",
-                "{{.Name}}|{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.RunningFor}}",
+                "{{.Name}}|{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -90,22 +89,20 @@ async def get_docker_containers():
             elif "Cannot connect" in result.stderr:
                 return "Docker не запущен"
             else:
-                return f"Ошибка Docker stats: {result.stderr.strip()}"
+                return f"Ошибка Docker: {result.stderr.strip()[:100]}"
 
         containers = []
         for line in result.stdout.strip().split("\n"):
             if line.strip():
                 parts = line.split("|")
-                if len(parts) >= 6:
+                if len(parts) >= 5:
                     name = parts[0]
                     container_id = parts[1]
-                    cpu_percent = parts[2].strip()
-                    mem_usage = parts[3].strip()
-                    mem_percent = parts[4].strip()
-                    running_for = parts[5].strip()
+                    cpu_percent = parts[2].strip() or "-"
+                    mem_usage = parts[3].strip() or "-"
+                    mem_percent = parts[4].strip() or "-"
 
-                    # Форматируем вывод
-                    container_info = f"• {name} ({container_id}), CPU: {cpu_percent}, RAM: {mem_usage} ({mem_percent}), {running_for}"
+                    container_info = f"• {name} ({container_id}), CPU: {cpu_percent}, RAM: {mem_usage} ({mem_percent})"
                     containers.append(container_info)
 
         if not containers:
@@ -114,19 +111,19 @@ async def get_docker_containers():
         return "\n".join(containers)
 
     except subprocess.TimeoutExpired:
-        return "Таймаут запроса к Docker stats. Попробуйте снова."
+        return "Таймаут запроса к Docker"
     except Exception as e:
         logger.error(f"Ошибка при получении Docker контейнеров: {e}")
-        return f"Ошибка получения статистики: {str(e)}\nПопробуйте повторить запрос."
+        return f"Ошибка получения статистики"
 
 
 async def main(tgkey=None, chatID=None):
     """Основная функция для формирования системного отчета"""
     try:
-        # Получение базовой информации о системе
+        # Базовая информация о системе
         uname = platform.uname()
 
-        # Получение времени загрузки и аптайма
+        # Время загрузки и аптайм
         try:
             boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
             uptime = datetime.datetime.now() - boot_time
@@ -137,7 +134,7 @@ async def main(tgkey=None, chatID=None):
             boot_time_str = "N/A"
             uptime_str = "N/A"
 
-        # Получение информации о CPU
+        # CPU
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
             cpu_str = f"{cpu_percent:.1f}%"
@@ -145,7 +142,7 @@ async def main(tgkey=None, chatID=None):
             logger.error(f"Ошибка при получении нагрузки CPU: {e}")
             cpu_str = "N/A"
 
-        # Получение информации о памяти
+        # Память
         try:
             mem = psutil.virtual_memory()
             mem_percent = f"{mem.percent:.1f}%"
@@ -157,7 +154,7 @@ async def main(tgkey=None, chatID=None):
 
         try:
             swap = psutil.swap_memory()
-            swap_percent = f"{swap.percent:.1f}%" if hasattr(swap, "percent") else "N/A"
+            swap_percent = f"{swap.percent:.1f}%" if swap.percent else "N/A"
             swap_used = (
                 bytes_to_human_readable(swap.used) if hasattr(swap, "used") else "N/A"
             )
@@ -166,7 +163,7 @@ async def main(tgkey=None, chatID=None):
             swap_percent = "N/A"
             swap_used = "N/A"
 
-        # Получение информации о диске
+        # Диск
         try:
             disk = psutil.disk_usage("/")
             disk_percent = f"{disk.percent:.1f}%"
@@ -176,7 +173,7 @@ async def main(tgkey=None, chatID=None):
             disk_percent = "N/A"
             disk_used = "N/A"
 
-        # Получение сетевой статистики
+        # Сеть
         net_usage = "N/A"
         try:
             net1 = psutil.net_io_counters()
@@ -184,82 +181,84 @@ async def main(tgkey=None, chatID=None):
             net2 = psutil.net_io_counters()
             bytes_sent = net2.bytes_sent - net1.bytes_sent
             bytes_recv = net2.bytes_recv - net1.bytes_recv
-            net_usage = (
-                f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | "
-                f"⬇️ {bytes_to_human_readable(bytes_recv)}/s"
-            )
+            net_usage = f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | ⬇️ {bytes_to_human_readable(bytes_recv)}/s"
         except Exception as e:
             logger.error(f"Ошибка при получении сетевой статистики: {e}")
 
-        # Получаем информацию о Docker контейнерах
+        # Docker контейнеры
         docker_info = await get_docker_containers()
 
         # Проверка состояния системы
         alerts = []
         if isinstance(cpu_percent, (int, float)) and cpu_percent > 85:
-            alerts.append("⚠️ Высокая нагрузка CPU!")
+            alerts.append("⚠️ Высокая нагрузка CPU")
         if isinstance(mem.percent, (int, float)) and mem.percent > 90:
-            alerts.append("⚠️ Критическое использование RAM!")
+            alerts.append("⚠️ Критическое использование RAM")
         if isinstance(disk.percent, (int, float)) and disk.percent > 90:
-            alerts.append("⚠️ Мало места на диске!")
+            alerts.append("⚠️ Мало места на диске")
 
         alert_text = "\n".join(alerts) if alerts else "✅ Система в норме"
 
-        # Получение информации о процессах
+        # Процессы
         proc_info = "Не удалось получить информацию о процессах"
         try:
+            # Инициализируем CPU проценты
             for p in psutil.process_iter():
                 try:
-                    p.cpu_percent(interval=None)
-                except Exception:
+                    p.cpu_percent()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
-            await asyncio.sleep(1)
-            procs = []
+
+            await asyncio.sleep(0.5)
+
+            processes = []
             for p in psutil.process_iter(
                 ["pid", "name", "cpu_percent", "memory_percent"]
             ):
                 try:
-                    procs.append(p)
-                except Exception:
-                    pass
+                    processes.append(p)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            # Сортируем по использованию CPU
             top_procs = sorted(
-                procs, key=lambda p: p.info["cpu_percent"], reverse=True
+                processes, key=lambda x: x.info["cpu_percent"] or 0, reverse=True
             )[:5]
 
             proc_lines = []
             for p in top_procs:
-                name = escape_html(p.info["name"])
+                name = escape_html(p.info["name"][:20])
                 pid = escape_html(str(p.info["pid"]))
-                cpu = escape_html(f"{p.info['cpu_percent']:5.1f}")
-                memory = escape_html(f"{p.info['memory_percent']:5.1f}")
+                cpu = f"{p.info['cpu_percent'] or 0:.1f}"
+                memory = f"{p.info['memory_percent'] or 0:.1f}"
+
                 proc_lines.append(
-                    f"— <b>{name:<20}</b> "
-                    f"(PID <code>{pid:>5}</code>)  "
-                    f"CPU: <code>{cpu}%</code>  "
-                    f"RAM: <code>{memory}%</code>"
+                    f"— {name:<20} (PID {pid:>6}) CPU: {cpu:>5}% RAM: {memory:>5}%"
                 )
+
             proc_info = "\n".join(proc_lines)
         except Exception as e:
             logger.error(f"Ошибка при получении информации о процессах: {e}")
 
-        # Проверка статуса сервисов
+        # Сервисы
         services_to_check = ["ssh", "nginx", "docker"]
         services_status = "\n".join(check_service(s) for s in services_to_check)
 
-        # Экранируем все пользовательские данные
+        # Экранирование данных
         hostname = escape_html(uname.node)
         os_info = escape_html(f"{uname.system} {uname.release}")
         docker_info_escaped = escape_html(docker_info)
         services_status_escaped = escape_html(services_status)
         alert_text_escaped = escape_html(alert_text)
+        proc_info_escaped = escape_html(proc_info)
 
-        # Формирование сообщения с HTML-разметкой
+        # Формирование сообщения
         message = (
             "🖥️ <b>Отчет о состоянии сервера</b>\n"
             "========================\n"
             f"• Хост: <code>{hostname}</code>\n"
             f"• ОС: <code>{os_info}</code>\n"
-            f"• Дата запуска: <code>{boot_time_str}</code>\n"
+            f"• Загрузка: <code>{boot_time_str}</code>\n"
             f"• Аптайм: <code>{uptime_str}</code>\n"
             "------------------------\n"
             f"<b>CPU</b>: <code>{cpu_str}</code>\n"
@@ -271,7 +270,7 @@ async def main(tgkey=None, chatID=None):
             f"<b>Статус:</b>\n{alert_text_escaped}\n"
             "------------------------\n"
             f"<b>Процессы:</b>\n"
-            f"{proc_info}\n"
+            f"{proc_info_escaped}\n"
             "------------------------\n"
             f"<b>Сервисы:</b>\n"
             f"{services_status_escaped}\n"
@@ -280,12 +279,13 @@ async def main(tgkey=None, chatID=None):
             f"{docker_info_escaped}\n"
             "========================"
         )
-        logger.info("Системный отчет успешно сформирован.")
+
+        logger.info("Системный отчет успешно сформирован")
         return message
 
     except Exception as e:
         logger.error(f"Ошибка при формировании системного отчета: {e}")
-        return "❌ Ошибка при формировании отчёта."
+        return "❌ Ошибка при формировании отчёта"
 
 
 if __name__ == "__main__":
