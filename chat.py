@@ -39,7 +39,18 @@ def gpt(
     safe_content = sanitize(content, 1000)
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash-8b")
+
+    # Model configuration
+    generation_config = {
+        "temperature": 0.8,  # Низкая температура для более точной сумаризации
+        "max_output_tokens": 300,  # Ограничение длины
+        # "top_p": 0.8,
+        # "top_k": 40,
+    }
+
+    model = genai.GenerativeModel(
+        "gemini-1.5-flash-8b", generation_config=generation_config
+    )
 
     if reset or user_sessions[user_id]["chat"] is None:
         user_sessions[user_id] = {
@@ -72,7 +83,12 @@ def gpt(
 
         # Суммаризация каждые N сообщений
         if session["turns"] >= SUMMARIZE_EVERY_N_TURNS:
+            old_size = len(str(session["history"]))
             summarized = summarize_history(session["history"])
+            new_size = len(summarized)
+            logger.info(
+                f"Сумаризация для {user_name}: {old_size} -> {new_size} символов"
+            )
             session["chat"] = model.start_chat(
                 history=[
                     {"role": "user", "parts": f"Суммаризация:\n{summarized}"},
