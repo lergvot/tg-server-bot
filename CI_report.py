@@ -4,12 +4,11 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-
 # Глобальная переменная для хранения последнего деплоя
-_last_deploy_report = None
+_last_deploy_report: str | None = None
 
 
-def get_last_deploy_report():
+def get_last_deploy_report() -> str | None:
     return _last_deploy_report
 
 
@@ -55,9 +54,8 @@ def create_bot_server(tg_token: str, chat_id: str, ci_secret: str) -> FastAPI:
         status = add_status_emoji(get_str_field(data, "status", "<нет статуса>"))
         commit = get_str_field(data, "commit", "")[:7] or "<нет коммита>"
         commit_msg = get_str_field(data, "message", "—")
-        commit_msg = (
-            commit_msg.replace(":", ":\n", 1) if ":" in commit_msg else commit_msg
-        )
+        lines = commit_msg.split("\n", 1)
+        commit_msg = lines[0] + ("\n" + lines[1] if len(lines) > 1 else "")
         event_name = get_str_field(data, "event_name", "<неизвестное событие>")
         url = get_str_field(data, "url", "https://example.com")
         repo_url = get_str_field(data, "repo_url", "https://example.com")
