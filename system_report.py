@@ -1,6 +1,7 @@
 # system_report.py
 import asyncio
 import datetime
+import html
 import logging
 import platform
 import subprocess
@@ -25,6 +26,13 @@ def bytes_to_human_readable(num_bytes):
             return f"{num_bytes:.1f} {unit}"
         num_bytes /= 1024.0
     return f"{num_bytes:.1f} PiB"
+
+
+def escape_html(text):
+    """Экранирует HTML-сущности в тексте"""
+    if text is None:
+        return ""
+    return html.escape(str(text))
 
 
 def check_service(service_name):
@@ -122,37 +130,51 @@ async def main(tgkey=None, chatID=None):
         try:
             boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
             uptime = datetime.datetime.now() - boot_time
+            boot_time_str = boot_time.strftime("%Y-%m-%d %H:%M:%S")
+            uptime_str = format_uptime(uptime)
         except Exception as e:
             logger.error(f"Ошибка при получении времени загрузки: {e}")
-            boot_time = "N/A"
-            uptime = "N/A"
+            boot_time_str = "N/A"
+            uptime_str = "N/A"
 
         # Получение информации о CPU
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
+            cpu_str = f"{cpu_percent:.1f}%"
         except Exception as e:
             logger.error(f"Ошибка при получении нагрузки CPU: {e}")
-            cpu_percent = "N/A"
+            cpu_str = "N/A"
 
         # Получение информации о памяти
         try:
             mem = psutil.virtual_memory()
+            mem_percent = f"{mem.percent:.1f}%"
+            mem_used = bytes_to_human_readable(mem.used)
         except Exception as e:
             logger.error(f"Ошибка при получении информации о памяти: {e}")
-            mem = type("obj", (object,), {"percent": "N/A", "used": 0})()
+            mem_percent = "N/A"
+            mem_used = "N/A"
 
         try:
             swap = psutil.swap_memory()
+            swap_percent = f"{swap.percent:.1f}%" if hasattr(swap, "percent") else "N/A"
+            swap_used = (
+                bytes_to_human_readable(swap.used) if hasattr(swap, "used") else "N/A"
+            )
         except Exception as e:
             logger.error(f"Ошибка при получении информации о swap: {e}")
-            swap = type("obj", (object,), {"percent": "N/A", "used": 0})()
+            swap_percent = "N/A"
+            swap_used = "N/A"
 
         # Получение информации о диске
         try:
             disk = psutil.disk_usage("/")
+            disk_percent = f"{disk.percent:.1f}%"
+            disk_used = bytes_to_human_readable(disk.used)
         except Exception as e:
             logger.error(f"Ошибка при получении информации о диске: {e}")
-            disk = type("obj", (object,), {"percent": "N/A", "used": 0})()
+            disk_percent = "N/A"
+            disk_used = "N/A"
 
         # Получение сетевой статистики
         net_usage = "N/A"
@@ -204,13 +226,19 @@ async def main(tgkey=None, chatID=None):
                 procs, key=lambda p: p.info["cpu_percent"], reverse=True
             )[:5]
 
-            proc_info = "\n".join(
-                f"— *{p.info['name']:<20}* "  # имя процесса, выравнивание по левому краю, 20 символов
-                f"(PID `{p.info['pid']:>5}`)  "  # PID, выравнивание по правому краю, 5 символов
-                f"CPU: `{p.info['cpu_percent']:>5.1f}%`  "  # CPU, выравнивание по правому краю, 5 символов
-                f"RAM: `{p.info['memory_percent']:>5.1f}%`"  # RAM, выравнивание по правому краю, 5 символов
-                for p in top_procs
-            )
+            proc_lines = []
+            for p in top_procs:
+                name = escape_html(p.info["name"])
+                pid = escape_html(str(p.info["pid"]))
+                cpu = escape_html(f"{p.info['cpu_percent']:5.1f}")
+                memory = escape_html(f"{p.info['memory_percent']:5.1f}")
+                proc_lines.append(
+                    f"— <b>{name:<20}</b> "
+                    f"(PID <code>{pid:>5}</code>)  "
+                    f"CPU: <code>{cpu}%</code>  "
+                    f"RAM: <code>{memory}%</code>"
+                )
+            proc_info = "\n".join(proc_lines)
         except Exception as e:
             logger.error(f"Ошибка при получении информации о процессах: {e}")
 
@@ -218,34 +246,38 @@ async def main(tgkey=None, chatID=None):
         services_to_check = ["ssh", "nginx", "docker"]
         services_status = "\n".join(check_service(s) for s in services_to_check)
 
-        # Формирование сообщения
+        # Экранируем все пользовательские данные
+        hostname = escape_html(uname.node)
+        os_info = escape_html(f"{uname.system} {uname.release}")
+        docker_info_escaped = escape_html(docker_info)
+        services_status_escaped = escape_html(services_status)
+        alert_text_escaped = escape_html(alert_text)
+
+        # Формирование сообщения с HTML-разметкой
         message = (
-            "🖥️ *Отчет о состоянии сервера*\n"
+            "🖥️ <b>Отчет о состоянии сервера</b>\n"
             "========================\n"
-            f"• Хост: `{uname.node}`\n"
-            f"• ОС: `{uname.system} {uname.release}`\n"
-            f"• Дата запуска: `{boot_time if isinstance(boot_time, str) else boot_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
-            f"• Аптайм: `{uptime if isinstance(uptime, str) else format_uptime(uptime)}`\n"
+            f"• Хост: <code>{hostname}</code>\n"
+            f"• ОС: <code>{os_info}</code>\n"
+            f"• Дата запуска: <code>{boot_time_str}</code>\n"
+            f"• Аптайм: <code>{uptime_str}</code>\n"
             "------------------------\n"
-            f"*CPU*: `{cpu_percent}%`\n"
-            f"*RAM*: `{mem.percent if hasattr(mem, 'percent') else 'N/A'}%` "
-            f" ({bytes_to_human_readable(mem.used) if hasattr(mem, 'used') else 'N/A'})\n"
-            f"*Swap*: `{swap.percent if hasattr(swap, 'percent') else 'N/A'}%` "
-            f" ({bytes_to_human_readable(swap.used) if hasattr(swap, 'used') else 'N/A'})\n"
-            f"*Диск*: `{disk.percent if hasattr(disk, 'percent') else 'N/A'}%` "
-            f" ({bytes_to_human_readable(disk.used) if hasattr(disk, 'used') else 'N/A'})\n"
-            f"*Сеть*: {net_usage}\n"
+            f"<b>CPU</b>: <code>{cpu_str}</code>\n"
+            f"<b>RAM</b>: <code>{mem_percent}</code> ({mem_used})\n"
+            f"<b>Swap</b>: <code>{swap_percent}</code> ({swap_used})\n"
+            f"<b>Диск</b>: <code>{disk_percent}</code> ({disk_used})\n"
+            f"<b>Сеть</b>: {net_usage}\n"
             "------------------------\n"
-            f"*Статус:*\n{alert_text}\n"
+            f"<b>Статус:</b>\n{alert_text_escaped}\n"
             "------------------------\n"
-            "*Процессы:*\n"
+            f"<b>Процессы:</b>\n"
             f"{proc_info}\n"
             "------------------------\n"
-            "*Сервисы:*\n"
-            f"{services_status}\n"
+            f"<b>Сервисы:</b>\n"
+            f"{services_status_escaped}\n"
             "------------------------\n"
-            "*Docker контейнеры:*\n"
-            f"{docker_info}\n"
+            f"<b>Docker контейнеры:</b>\n"
+            f"{docker_info_escaped}\n"
             "========================"
         )
         logger.info("Системный отчет успешно сформирован.")

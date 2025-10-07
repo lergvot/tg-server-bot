@@ -82,12 +82,13 @@ class Main:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=str(message),
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             logger.info("Отчёт успешно отправлен.")
         except Exception as e:
             await context.bot.send_message(
-                chat_id=update.effective_chat.id, text="Произошла ошибка при отчёте."
+                chat_id=update.effective_chat.id,
+                text="Произошла ошибка при формировании отчёта.",
             )
             logger.error(f"Ошибка в system_report: {str(e)}")
 
