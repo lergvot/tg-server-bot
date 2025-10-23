@@ -1,0 +1,36 @@
+# docker-compose.yml
+name: tg-bot-project
+
+services:
+  tg-server-bot:
+    container_name: tg-server-bot
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile
+    environment:
+      TGKEY: ${TGKEY}
+      CHATID: ${CHATID}
+      GEMINI_KEY: ${GEMINI_KEY}
+      CI_SECRET: ${CI_SECRET}
+
+    restart: unless-stopped
+    networks:
+      - backend
+
+  nginx:
+    build:
+      context: ..
+      dockerfile: Docker/Dockerfile.nginx
+    container_name: nginx-tg
+    ports:
+      - "8001:80"
+      # - "443:443" если нужен HTTPS
+    depends_on:
+      - tg-server-bot
+    restart: unless-stopped
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge

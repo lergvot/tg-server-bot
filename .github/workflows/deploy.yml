@@ -6,44 +6,13 @@ on:
       - main
 
 jobs:
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    if: false # Тестов нет, пропускаем этот шаг
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.13.3'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # pip install pytest
-
-      - name: Run tests
-        run: |
-          # Тестов пока нет, пропускаем pytest
-          echo "No tests to run yet, skipping pytest"
-
   deploy:
-    name: Deploy to Server
+    name: Deploy pipeline
     runs-on: ubuntu-latest
-    # needs: test
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.13.3'
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -51,41 +20,43 @@ jobs:
           pip install -r requirements.txt
 
       - name: Deploy to server
-        uses: appleboy/ssh-action@v0.1.10
+        id: deploy
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /opt/TelegramServerBot
-      
-            # Остановка сервиса и очистка логов
-            systemctl stop tgbot.service || true
-            [ -f tg_bot.log ] && rm tg_bot.log
-            
-            # Синхронизация последних изменений
-            git fetch origin main --force
-            git reset --hard origin/main
-            git clean -fdx
+            cd /opt/tg-server-bot
 
-            # Создание venv (если не существует)
-            if [ ! -d "venv" ]; then
-              python3 -m venv venv
+            echo "🔄 Обновление кода из main"
+            git fetch origin main --depth=1
+            git reset --hard FETCH_HEAD
+            git clean -xfd
+
+            echo "🛑 Остановка старых контейнеров..."
+            docker compose -f Docker/docker-compose.yml down --remove-orphans
+
+            echo "Сборка и запуск..."
+            docker compose -f Docker/docker-compose.yml up -d --build
+
+            sleep 10
+            echo "Проверка статуса контейнеров..."
+            if ! docker compose -f Docker/docker-compose.yml ps --services --filter status=running | grep -q "tg-server-bot"; then
+              echo "❌ Ошибка: сервис tg-server-bot не запущен"
+              exit 1
             fi
 
-            # Активация и обновление
-            source venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-            
-            # Перезапуск сервиса
-            systemctl daemon-reload
-            systemctl start tgbot.service
-            echo "✅ Clean deployment completed"
-            
+            if ! docker compose -f Docker/docker-compose.yml ps --services --filter status=running | grep -q "nginx"; then
+              echo "❌ Ошибка: сервис nginx не запущен"
+              exit 1
+            fi
+
+            echo "✅ Deployment completed"
+
       - name: Wait for FastAPI to be healthy
-        uses: appleboy/ssh-action@v0.1.10
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
@@ -93,13 +64,15 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             echo "⏳ Проверка запуска FastAPI (http://127.0.0.1:8001/health)..."
-            for i in {1..15}; do
+            for i in {1..30}; do
               sleep 2
-              if curl -s --fail http://127.0.0.1:8001/health > /dev/null; then
+              response=$(curl -s -X GET http://127.0.0.1:8001/health)
+              if echo "$response" | grep -q '"status":"ok"'; then
                 echo "✅ FastAPI запущен и отвечает на /health"
+                echo "Ответ: $response"
                 exit 0
               fi
-              echo "⏳ Ожидаем /health... ($i/15)"
+              echo "⏳ Ожидаем /health... ($i/30)"
             done
             echo "❌ FastAPI не запустился вовремя"
             exit 1
@@ -111,6 +84,7 @@ jobs:
         id: prepare_payload
         run: |
           echo "Создаём JSON для CI-репорта"
+          COMMIT_MSG="$(git log -1 --pretty=%B)"
           echo '{
             "secret": "'"${{ secrets.CI_SECRET }}"'",
             "project": "'"${{ github.repository }}"'",
@@ -120,7 +94,7 @@ jobs:
             "branch": "'"${{ github.ref_name }}"'",
             "workflow": "'"${{ github.workflow }}"'",
             "event_name": "'"${{ github.event_name }}"'",
-            "message": "'"${{ github.event.head_commit.message }}"'",
+            "message": "'"$COMMIT_MSG"'",
             "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "repo_url": "https://github.com/${{ github.repository }}"
           }' > ci_payload.json
@@ -130,7 +104,7 @@ jobs:
         env:
           CI_ENDPOINT: ${{ secrets.CI_ENDPOINT }}
         run: |
-          echo "📡 Отправляем CI-отчёт..."
+          echo "Отправляем CI-отчёт..."
           PAYLOAD_FILE="${{ steps.prepare_payload.outputs.payload_file }}"
           echo "Используем файл: $PAYLOAD_FILE"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$CI_ENDPOINT" \

@@ -40,12 +40,13 @@ def gpt(
 
     genai.configure(api_key=api_key)
 
-    # Model configuration
+    # Конфигурация модели
     generation_config = {
-        "temperature": 0.7,  # Низкая температура для более точного ответа
-        "max_output_tokens": 140,  # Ограничение длины
+        "temperature": 0.7,
+        "max_output_tokens": 200,
         "top_p": 0.8,
         "top_k": 40,
+        "candidate_count": 1,
     }
 
     model = genai.GenerativeModel(
