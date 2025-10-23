@@ -27,7 +27,13 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: TGKEY,CHATID,GEMINI_KEY,CI_SECRET
           script: |
+            export TGKEY="${{ secrets.TGKEY }}"
+            export CHATID="${{ secrets.CHATID }}"
+            export GEMINI_KEY="${{ secrets.GEMINI_KEY }}"
+            export CI_SECRET="${{ secrets.CI_SECRET }}"
+
             cd /opt/tg-server-bot
 
             echo "🔄 Обновление кода из main"
