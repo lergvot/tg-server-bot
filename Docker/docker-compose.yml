@@ -1,4 +1,6 @@
 # docker-compose.yml
+name: tg-bot-project
+
 services:
   tg-server-bot:
     container_name: tg-server-bot
@@ -21,13 +23,13 @@ services:
       dockerfile: Docker/Dockerfile.nginx
     container_name: nginx-tg
     ports:
-      - "8080:80"
+      - "8001:80"
       # - "443:443" если нужен HTTPS
     depends_on:
       - tg-server-bot
+    restart: unless-stopped
     networks:
       - backend
-    restart: unless-stopped
 
 networks:
   backend:

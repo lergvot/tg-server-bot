@@ -1,0 +1,15 @@
+# Dev/Test
+tests/
+.git/
+.env
+venv/
+
+# Cache
+__pycache__/
+*.pyc
+
+# Data
+*.db
+*.sqlite3
+data/
+logs/
