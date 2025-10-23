@@ -13,12 +13,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.13.3'
+          python-version: "3.13.9"
 
       - name: Install dependencies
         run: |
@@ -43,7 +43,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.13.3'
+          python-version: "3.13.9"
 
       - name: Install dependencies
         run: |
@@ -59,11 +59,11 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /opt/TelegramServerBot
-      
+
             # Остановка сервиса и очистка логов
             systemctl stop tgbot.service || true
             [ -f tg_bot.log ] && rm tg_bot.log
-            
+
             # Синхронизация последних изменений
             git fetch origin main --force
             git reset --hard origin/main
@@ -78,12 +78,12 @@ jobs:
             source venv/bin/activate
             pip install --upgrade pip
             pip install -r requirements.txt
-            
+
             # Перезапуск сервиса
             systemctl daemon-reload
             systemctl start tgbot.service
             echo "✅ Clean deployment completed"
-            
+
       - name: Wait for FastAPI to be healthy
         uses: appleboy/ssh-action@v0.1.10
         with:
