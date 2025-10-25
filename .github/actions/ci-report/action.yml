@@ -1,0 +1,47 @@
+name: "CI Report Action"
+description: "Sends CI report to Telegram"
+
+inputs:
+  status:
+    description: "Job status"
+    required: true
+  ci_secret:
+    description: "CI Secret for authentication"
+    required: true
+  ci_endpoint:
+    description: "CI endpoint URL"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare CI payload
+      shell: bash
+      run: |
+        STATUS_EMOJI=$([ "${{ inputs.status }}" == "success" ] && echo "✅ Успешно" || echo "❌ Ошибка")
+        COMMIT_MSG="$(git log -1 --pretty=%B)"
+        echo '{
+          "secret": "'"${{ inputs.ci_secret }}"'",
+          "project": "'"${{ github.repository }}"'",
+          "status": "'"$STATUS_EMOJI"'",
+          "commit": "'"$(git rev-parse --short HEAD)"'",
+          "author": "'"${{ github.actor }}"'",
+          "branch": "'"${{ github.ref_name }}"'",
+          "workflow": "'"${{ github.workflow }}"'",
+          "event_name": "'"${{ github.event_name }}"'",
+          "message": "'"$COMMIT_MSG"'",
+          "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+          "repo_url": "https://github.com/${{ github.repository }}"
+        }' > ci_payload.json
+
+    - name: Send CI Report
+      shell: bash
+      run: |
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ inputs.ci_endpoint }}" \
+          -H "Content-Type: application/json" \
+          -d @ci_payload.json)
+
+        if [[ "$HTTP_CODE" -ne 200 ]]; then
+          echo "::warning::CI report failed with HTTP $HTTP_CODE"
+          exit 1
+        fi

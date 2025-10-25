@@ -83,44 +83,9 @@ jobs:
             echo "❌ FastAPI не запустился вовремя"
             exit 1
 
-      - name: Set CI status env
-        run: echo "STATUS=✅ Успешно" >> $GITHUB_ENV
-
-      - name: Prepare CI payload
-        id: prepare_payload
-        run: |
-          echo "Создаём JSON для CI-репорта"
-          COMMIT_MSG="$(git log -1 --pretty=%B)"
-          echo '{
-            "secret": "'"${{ secrets.CI_SECRET }}"'",
-            "project": "'"${{ github.repository }}"'",
-            "status": "'"$STATUS"'",
-            "commit": "'"$(git rev-parse --short HEAD)"'",
-            "author": "'"${{ github.actor }}"'",
-            "branch": "'"${{ github.ref_name }}"'",
-            "workflow": "'"${{ github.workflow }}"'",
-            "event_name": "'"${{ github.event_name }}"'",
-            "message": "'"$COMMIT_MSG"'",
-            "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-            "repo_url": "https://github.com/${{ github.repository }}"
-          }' > ci_payload.json
-          echo "payload_file=ci_payload.json" >> $GITHUB_OUTPUT
-
-      - name: Send CI Report to Telegram Bot
-        env:
-          CI_ENDPOINT: ${{ secrets.CI_ENDPOINT }}
-        run: |
-          echo "Отправляем CI-отчёт..."
-          PAYLOAD_FILE="${{ steps.prepare_payload.outputs.payload_file }}"
-          echo "Используем файл: $PAYLOAD_FILE"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$CI_ENDPOINT" \
-            -H "Content-Type: application/json" \
-            -d @"$PAYLOAD_FILE")
-
-          echo "HTTP_CODE=$HTTP_CODE"
-          if [[ "$HTTP_CODE" -ne 200 ]]; then
-            echo "::warning::CI report failed with HTTP $HTTP_CODE"
-            exit 1
-          else
-            echo "✅ CI-отчёт успешно отправлен. Код ответа: $HTTP_CODE"
-          fi
+      - name: Report Status
+        uses: ./.github/actions/ci-report
+        with:
+          status: ${{ steps.deploy.outcome }}
+          ci_secret: ${{ secrets.CI_SECRET }}
+          ci_endpoint: ${{ secrets.CI_ENDPOINT }}

@@ -1,9 +1,9 @@
 # docker-compose.yml
-name: tg-bot-project
+name: tg-bot
 
 services:
-  tg-server-bot:
-    container_name: tg-server-bot
+  bot:
+    container_name: bot
     build:
       context: ..
       dockerfile: Docker/Dockerfile
@@ -12,7 +12,10 @@ services:
       CHATID: ${CHATID}
       GEMINI_KEY: ${GEMINI_KEY}
       CI_SECRET: ${CI_SECRET}
-
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host_root:ro
     restart: unless-stopped
     networks:
       - backend
@@ -21,12 +24,12 @@ services:
     build:
       context: ..
       dockerfile: Docker/Dockerfile.nginx
-    container_name: nginx-tg
+    container_name: nginx
     ports:
       - "8001:80"
       # - "443:443" если нужен HTTPS
     depends_on:
-      - tg-server-bot
+      - bot
     restart: unless-stopped
     networks:
       - backend

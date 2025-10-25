@@ -3,14 +3,291 @@ import asyncio
 import datetime
 import html
 import logging
+import os
 import platform
+import re
 import subprocess
-
-import psutil
+from collections import defaultdict
 
 logger = logging.getLogger("system_report")
 
 SYSTEMCTL_PATH = "/usr/bin/systemctl"
+
+HOST_PROC_PATH = "/host/proc"
+HOST_SYS_PATH = "/host/sys"
+HOST_ROOT_PATH = "/host_root"  # Для disk_usage
+
+
+def read_cpu_stats():
+    """Читает /host/proc/stat и возвращает информацию о CPU."""
+    cpu_times = {}
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "stat"), "r") as f:
+            for line in f:
+                if line.startswith("cpu "):  # Общее значение
+                    parts = line.split()
+                    cpu_times["total"] = sum(int(x) for x in parts[1:8])
+                    cpu_times["idle"] = int(parts[4])
+                    break
+    except FileNotFoundError:
+        logger.error(f"Файл {os.path.join(HOST_PROC_PATH, 'stat')} не найден")
+    except Exception as e:
+        logger.error(f"Ошибка при чтении {os.path.join(HOST_PROC_PATH, 'stat')}: {e}")
+    return cpu_times
+
+
+def read_memory_stats():
+    """Читает /host/proc/meminfo и возвращает информацию о памяти."""
+    mem_info = {}
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "meminfo"), "r") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    mem_info["total"] = int(line.split()[1]) * 1024  # KiB to bytes
+                elif line.startswith("MemFree:"):
+                    mem_info["free"] = int(line.split()[1]) * 1024
+                elif line.startswith("MemAvailable:"):
+                    mem_info["available"] = int(line.split()[1]) * 1024
+                elif line.startswith("Buffers:"):
+                    mem_info["buffers"] = int(line.split()[1]) * 1024
+                elif line.startswith("Cached:"):
+                    mem_info["cached"] = int(line.split()[1]) * 1024
+                elif line.startswith("SwapTotal:"):
+                    mem_info["swap_total"] = int(line.split()[1]) * 1024
+                elif line.startswith("SwapFree:"):
+                    mem_info["swap_free"] = int(line.split()[1]) * 1024
+                # Останавливаемся, когда нашли все нужные поля
+                if all(
+                    k in mem_info
+                    for k in [
+                        "total",
+                        "free",
+                        "available",
+                        "buffers",
+                        "cached",
+                        "swap_total",
+                        "swap_free",
+                    ]
+                ):
+                    break
+    except FileNotFoundError:
+        logger.error(f"Файл {os.path.join(HOST_PROC_PATH, 'meminfo')} не найден")
+    except Exception as e:
+        logger.error(
+            f"Ошибка при чтении {os.path.join(HOST_PROC_PATH, 'meminfo')}: {e}"
+        )
+    return mem_info
+
+
+def read_disk_stats(path="/"):
+    """Читает информацию о диске для указанного пути."""
+    try:
+        # Используем HOST_ROOT_PATH как корень для пути
+        full_path = os.path.join(HOST_ROOT_PATH, path.lstrip("/"))
+        statvfs = os.statvfs(full_path)
+        total = statvfs.f_frsize * statvfs.f_blocks
+        free = statvfs.f_frsize * statvfs.f_bavail
+        used = total - free
+        percent = (used / total) * 100 if total > 0 else 0
+        return {"total": total, "used": used, "free": free, "percent": percent}
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики диска для {full_path}: {e}")
+        return {"total": 0, "used": 0, "free": 0, "percent": 0}
+
+
+def read_network_stats():
+    """Читает /host/proc/net/dev и возвращает информацию о сети."""
+    net_info = {}
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "net/dev"), "r") as f:
+            lines = f.readlines()[2:]  # Пропускаем заголовки
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 10:
+                    interface = parts[0].rstrip(":")
+                    bytes_recv = int(parts[1])
+                    bytes_sent = int(parts[9])
+                    net_info[interface] = {
+                        "bytes_recv": bytes_recv,
+                        "bytes_sent": bytes_sent,
+                    }
+    except FileNotFoundError:
+        logger.error(f"Файл {os.path.join(HOST_PROC_PATH, 'net/dev')} не найден")
+    except Exception as e:
+        logger.error(
+            f"Ошибка при чтении {os.path.join(HOST_PROC_PATH, 'net/dev')}: {e}"
+        )
+    return net_info
+
+
+def read_boot_time():
+    """Читает время загрузки из /host/proc/stat."""
+    boot_time = 0
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "stat"), "r") as f:
+            for line in f:
+                if line.startswith("btime "):
+                    boot_time = int(line.split()[1])
+                    break
+    except FileNotFoundError:
+        logger.error(f"Файл {os.path.join(HOST_PROC_PATH, 'stat')} не найден для btime")
+    except Exception as e:
+        logger.error(
+            f"Ошибка при чтении btime из {os.path.join(HOST_PROC_PATH, 'stat')}: {e}"
+        )
+    return boot_time
+
+
+def read_processes_with_stats():
+    """
+    Читает информацию о процессах из /host/proc/[pid].
+    Возвращает список словарей с PID, именем, utime+stime (для CPU) и vsize/rss (для RAM).
+    """
+    processes = []
+    try:
+        for pid_dir in os.listdir(os.path.join(HOST_PROC_PATH)):
+            if pid_dir.isdigit():
+                pid = int(pid_dir)
+                try:
+                    with open(os.path.join(HOST_PROC_PATH, str(pid), "comm"), "r") as f:
+                        name = f.read().strip()
+                    # Читаем /host/proc/[pid]/stat для вычисления CPU%
+                    with open(os.path.join(HOST_PROC_PATH, str(pid), "stat"), "r") as f:
+                        stat_line = f.read().strip()
+                        stat_parts = stat_line.split()
+                        # utime (14-е поле, индекс 13) + stime (15-е поле, индекс 14)
+                        # В тиках CPU
+                        utime = int(stat_parts[13]) if len(stat_parts) > 14 else 0
+                        stime = int(stat_parts[14]) if len(stat_parts) > 15 else 0
+                        total_time = utime + stime
+
+                    # Читаем /host/proc/[pid]/status для вычисления RAM%
+                    vsize = 0  # Virtual memory size in bytes
+                    rss = 0  # Resident Set Size in pages
+                    with open(
+                        os.path.join(HOST_PROC_PATH, str(pid), "status"), "r"
+                    ) as f:
+                        for status_line in f:
+                            if status_line.startswith("VmSize:"):
+                                vsize = (
+                                    int(status_line.split()[1]) * 1024
+                                )  # KiB to bytes
+                            elif status_line.startswith("VmRSS:"):
+                                rss = int(status_line.split()[1]) * 1024  # KiB to bytes
+                            # Прерываем, если нашли оба значения
+                            if vsize > 0 and rss > 0:
+                                break
+
+                    processes.append(
+                        {
+                            "pid": pid,
+                            "name": name,
+                            "total_time": total_time,
+                            "vsize": vsize,
+                            "rss": rss,
+                        }
+                    )
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    OSError,
+                    IndexError,
+                    ValueError,
+                ):
+                    # Процесс мог завершиться, быть недоступен или stat/status файл имеет неожиданный формат
+                    continue
+    except FileNotFoundError:
+        logger.error(f"Директория {os.path.join(HOST_PROC_PATH)} не найдена")
+    except Exception as e:
+        logger.error(
+            f"Ошибка при чтении процессов из {os.path.join(HOST_PROC_PATH)}: {e}"
+        )
+    return processes
+
+
+def calculate_process_cpu_percent(
+    prev_processes, current_processes, cpu_time_diff_ticks
+):
+    """
+    Вычисляет процент использования CPU процессами.
+    cpu_time_diff_ticks - разница в общем времени CPU за интервал.
+    """
+    process_cpu_percentages = {}
+    if cpu_time_diff_ticks <= 0:
+        # Если время CPU не изменилось, нагрузка 0
+        for p in current_processes:
+            process_cpu_percentages[p["pid"]] = 0.0
+        return process_cpu_percentages
+
+    # Учтём количество ядер
+    cpu_count = os.cpu_count() or 1
+    for current_p in current_processes:
+        pid = current_p["pid"]
+        # Найти предыдущее значение для этого PID
+        prev_p = next((p for p in prev_processes if p["pid"] == pid), None)
+        if prev_p:
+            time_diff = current_p["total_time"] - prev_p["total_time"]
+            # Формула: (разница_времени_процесса / разница_общего_времени_цпу) * 100 * число_ядер
+            cpu_percent = (time_diff / cpu_time_diff_ticks) * 100.0 * cpu_count
+            process_cpu_percentages[pid] = max(
+                0.0, cpu_percent
+            )  # Не отрицательное значение
+        else:
+            # Процесс появился во втором замере, нагрузка неопределена или 0
+            process_cpu_percentages[pid] = 0.0
+
+    return process_cpu_percentages
+
+
+def calculate_process_memory_percent(processes, total_memory_bytes):
+    """
+    Вычисляет процент использования RAM процессами.
+    total_memory_bytes - общее количество памяти хоста.
+    """
+    process_memory_percentages = {}
+    for p in processes:
+        pid = p["pid"]
+        rss = p["rss"]  # Используем RSS (резидентную память)
+        if total_memory_bytes > 0:
+            mem_percent = (rss / total_memory_bytes) * 100.0
+        else:
+            mem_percent = 0.0
+        process_memory_percentages[pid] = mem_percent
+    return process_memory_percentages
+
+
+def calculate_cpu_percent(prev_cpu_times, current_cpu_times):
+    """Вычисляет процент использования CPU на основе двух замеров."""
+    if not prev_cpu_times or not current_cpu_times:
+        return 0.0
+
+    total_diff = current_cpu_times["total"] - prev_cpu_times["total"]
+    idle_diff = current_cpu_times["idle"] - prev_cpu_times["idle"]
+
+    if total_diff == 0:
+        return 0.0
+
+    cpu_percent = (total_diff - idle_diff) / total_diff * 100.0
+    return cpu_percent
+
+
+def calculate_network_speed(prev_net, current_net):
+    """Вычисляет скорость передачи данных."""
+    speeds = {}
+    for interface, current_data in current_net.items():
+        if interface in prev_net:
+            bytes_sent_diff = (
+                current_data["bytes_sent"] - prev_net[interface]["bytes_sent"]
+            )
+            bytes_recv_diff = (
+                current_data["bytes_recv"] - prev_net[interface]["bytes_recv"]
+            )
+            # Скорость за 1 секунду (asyncio.sleep(1) в основном коде)
+            speeds[interface] = {
+                "bytes_sent_per_sec": bytes_sent_diff,
+                "bytes_recv_per_sec": bytes_recv_diff,
+            }
+    return speeds
 
 
 def format_uptime(td):
@@ -67,15 +344,15 @@ def check_service(service_name):
 
 
 async def get_docker_containers():
-    """Получаем информацию о работающих Docker контейнерах"""
+    """Получаем информацию о работающих Docker контейнерах, группируем по проекту"""
     try:
+        # Получаем список всех контейнеров с именем и ID
         result = subprocess.run(
             [
                 "/usr/bin/docker",
-                "stats",
-                "--no-stream",
+                "ps",
                 "--format",
-                "{{.Name}}|{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
+                "{{.Names}}|{{.ID}}",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -91,24 +368,76 @@ async def get_docker_containers():
             else:
                 return f"Ошибка Docker: {result.stderr.strip()[:100]}"
 
-        containers = []
+        container_names = {}
         for line in result.stdout.strip().split("\n"):
             if line.strip():
                 parts = line.split("|")
-                if len(parts) >= 5:
+                if len(parts) >= 2:
                     name = parts[0]
                     container_id = parts[1][:12]
-                    cpu_percent = parts[2].strip() or "-"
-                    mem_usage = parts[3].strip() or "-"
-                    mem_percent = parts[4].strip() or "-"
+                    container_names[container_id] = name
 
-                    container_info = f"• {name} ({container_id}), CPU: {cpu_percent}, RAM: {mem_usage} ({mem_percent})"
-                    containers.append(container_info)
-
-        if not containers:
+        if not container_names:
             return "Нет работающих контейнеров"
 
-        return "\n".join(containers)
+        # Получаем статистику для всех контейнеров
+        stats_result = subprocess.run(
+            [
+                "/usr/bin/docker",
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15,
+        )
+
+        if stats_result.returncode != 0:
+            return f"Ошибка получения статистики: {stats_result.stderr.strip()[:100]}"
+
+        # Словарь для хранения статистики каждого контейнера
+        container_stats = {}
+        for line in stats_result.stdout.strip().split("\n"):
+            if line.strip():
+                parts = line.split("|")
+                if len(parts) >= 4:
+                    container_id = parts[0][:12]  # Усекаем ID, как в ps
+                    cpu_percent = parts[1].strip() or "-"
+                    mem_usage = parts[2].strip() or "-"
+                    mem_percent = parts[3].strip() or "-"
+                    container_stats[container_id] = {
+                        "cpu": cpu_percent,
+                        "mem_usage": mem_usage,
+                        "mem_percent": mem_percent,
+                    }
+
+        # Группируем контейнеры по имени проекта (до первого _)
+        grouped_containers = defaultdict(list)
+        for container_id, name in container_names.items():
+            # Извлекаем имя проекта из имени контейнера
+            # Пример: myproject_web_1 -> myproject
+            project_match = re.match(r"^([a-zA-Z0-9_-]+)_", name)
+            project_name = project_match.group(1) if project_match else "default"
+            # Получаем статистику для этого контейнера
+            stats = container_stats.get(
+                container_id, {"cpu": "-", "mem_usage": "-", "mem_percent": "-"}
+            )
+            container_info = f"• {name} ({container_id}), CPU: {stats['cpu']}, RAM: {stats['mem_usage']} ({stats['mem_percent']})"
+            grouped_containers[project_name].append(container_info)
+
+        if not grouped_containers:
+            return "Нет работающих контейнеров"
+
+        # Формируем строку отчёта
+        report_lines = []
+        for project, containers in grouped_containers.items():
+            report_lines.append(f"<b>Проект '{project}':</b>")
+            report_lines.extend(containers)
+
+        return "\n".join(report_lines)
 
     except subprocess.TimeoutExpired:
         return "Таймаут запроса к Docker"
@@ -123,120 +452,187 @@ async def main(tgkey=None, chatID=None):
         # Базовая информация о системе
         uname = platform.uname()
 
-        # Время загрузки и аптайм
+        # Время загрузки и аптайм (из /host/proc/stat)
         try:
-            boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-            uptime = datetime.datetime.now() - boot_time
-            boot_time_str = boot_time.strftime("%Y-%m-%d %H:%M:%S")
-            uptime_str = format_uptime(uptime)
+            boot_time_timestamp = read_boot_time()
+            if boot_time_timestamp > 0:
+                boot_time = datetime.datetime.fromtimestamp(boot_time_timestamp)
+                uptime = datetime.datetime.now() - boot_time
+                boot_time_str = boot_time.strftime("%Y-%m-%d %H:%M:%S")
+                uptime_str = format_uptime(uptime)
+            else:
+                boot_time_str = "N/A"
+                uptime_str = "N/A"
         except Exception as e:
             logger.error(f"Ошибка при получении времени загрузки: {e}")
             boot_time_str = "N/A"
             uptime_str = "N/A"
 
-        # CPU
+        # CPU (из /host/proc/stat)
         try:
-            cpu_percent = psutil.cpu_percent(interval=1)
+            # Первый замер
+            prev_cpu_times = read_cpu_stats()
+            await asyncio.sleep(1)
+            # Второй замер
+            current_cpu_times = read_cpu_stats()
+            cpu_percent = calculate_cpu_percent(prev_cpu_times, current_cpu_times)
             cpu_str = f"{cpu_percent:.1f}%"
         except Exception as e:
             logger.error(f"Ошибка при получении нагрузки CPU: {e}")
             cpu_str = "N/A"
 
-        # Память
+        # Память (из /host/proc/meminfo)
         try:
-            mem = psutil.virtual_memory()
-            mem_percent = f"{mem.percent:.1f}%"
-            mem_used = bytes_to_human_readable(mem.used)
+            mem_info = read_memory_stats()
+            if mem_info:
+                mem_total = mem_info.get("total", 0)
+                mem_available = mem_info.get("available", 0)
+                mem_used = (
+                    mem_total
+                    - mem_info.get("free", 0)
+                    - mem_info.get("buffers", 0)
+                    - mem_info.get("cached", 0)
+                )
+                # Или используем MemUsed = MemTotal - MemFree - Buffers - Cached
+                # mem_used_calc = mem_info['total'] - mem_info['free'] - mem_info['buffers'] - mem_info['cached']
+                mem_percent = (mem_used / mem_total) * 100 if mem_total > 0 else 0
+                mem_percent_str = f"{mem_percent:.1f}%"
+                mem_used_str = bytes_to_human_readable(mem_used)
+            else:
+                mem_percent_str = "N/A"
+                mem_used_str = "N/A"
         except Exception as e:
             logger.error(f"Ошибка при получении информации о памяти: {e}")
-            mem_percent = "N/A"
-            mem_used = "N/A"
+            mem_percent_str = "N/A"
+            mem_used_str = "N/A"
 
         try:
-            swap = psutil.swap_memory()
-            swap_percent = f"{swap.percent:.1f}%" if swap.percent else "N/A"
-            swap_used = (
-                bytes_to_human_readable(swap.used) if hasattr(swap, "used") else "N/A"
-            )
+            # Swap (из /host/proc/meminfo)
+            swap_total = mem_info.get("swap_total", 0)
+            swap_free = mem_info.get("swap_free", 0)
+            swap_used = swap_total - swap_free
+            swap_percent = (swap_used / swap_total) * 100 if swap_total > 0 else 0
+            swap_percent_str = f"{swap_percent:.1f}%"
+            swap_used_str = bytes_to_human_readable(swap_used)
         except Exception as e:
             logger.error(f"Ошибка при получении информации о swap: {e}")
-            swap_percent = "N/A"
-            swap_used = "N/A"
+            swap_percent_str = "N/A"
+            swap_used_str = "N/A"
 
-        # Диск
+        # Диск (из /host_root/)
         try:
-            disk = psutil.disk_usage("/")
-            disk_percent = f"{disk.percent:.1f}%"
-            disk_used = bytes_to_human_readable(disk.used)
+            disk_info = read_disk_stats("/")  # Используем корень хоста
+            disk_percent_str = f"{disk_info['percent']:.1f}%"
+            disk_used_str = bytes_to_human_readable(disk_info["used"])
         except Exception as e:
             logger.error(f"Ошибка при получении информации о диске: {e}")
-            disk_percent = "N/A"
-            disk_used = "N/A"
+            disk_percent_str = "N/A"
+            disk_used_str = "N/A"
 
-        # Сеть
+        # Сеть (из /host/proc/net/dev)
         net_usage = "N/A"
         try:
-            net1 = psutil.net_io_counters()
+            # Первый замер
+            prev_net = read_network_stats()
             await asyncio.sleep(1)
-            net2 = psutil.net_io_counters()
-            bytes_sent = net2.bytes_sent - net1.bytes_sent
-            bytes_recv = net2.bytes_recv - net1.bytes_recv
-            net_usage = f"⬆️ {bytes_to_human_readable(bytes_sent)}/s | ⬇️ {bytes_to_human_readable(bytes_recv)}/s"
+            # Второй замер
+            current_net = read_network_stats()
+            net_speeds = calculate_network_speed(prev_net, current_net)
+
+            # Суммируем скорости по всем интерфейсам (кроме loopback)
+            total_sent = 0
+            total_recv = 0
+            for interface, speeds in net_speeds.items():
+                if interface != "lo":  # Пропускаем loopback
+                    total_sent += speeds["bytes_sent_per_sec"]
+                    total_recv += speeds["bytes_recv_per_sec"]
+
+            net_usage = f"⬆️ {bytes_to_human_readable(total_sent)}/s | ⬇️ {bytes_to_human_readable(total_recv)}/s"
         except Exception as e:
             logger.error(f"Ошибка при получении сетевой статистики: {e}")
 
-        # Docker контейнеры
+        # Docker контейнеры (группировка)
         docker_info = await get_docker_containers()
 
         # Проверка состояния системы
         alerts = []
         if isinstance(cpu_percent, (int, float)) and cpu_percent > 85:
             alerts.append("⚠️ Высокая нагрузка CPU")
-        if isinstance(mem.percent, (int, float)) and mem.percent > 90:
+        if isinstance(mem_percent, (int, float)) and mem_percent > 90:
             alerts.append("⚠️ Критическое использование RAM")
-        if isinstance(disk.percent, (int, float)) and disk.percent > 90:
+        if (
+            isinstance(disk_info.get("percent"), (int, float))
+            and disk_info["percent"] > 90
+        ):
             alerts.append("⚠️ Мало места на диске")
 
         alert_text = "\n".join(alerts) if alerts else "✅ Система в норме"
 
-        # Процессы
+        # Процессы (из /host/proc/[pid]) с CPU% и RAM%
         proc_info = "Не удалось получить информацию о процессах"
         try:
-            # Инициализируем CPU проценты
-            for p in psutil.process_iter():
-                try:
-                    p.cpu_percent()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+            # --- НОВАЯ ЛОГИКА ---
+            # Первый замер времени процессов
+            prev_processes = read_processes_with_stats()
+            # Первый замер общего времени CPU для вычисления разницы
+            prev_cpu_stats = read_cpu_stats()
+            await asyncio.sleep(1)  # Ждём 1 секунду
+            # Второй замер времени процессов
+            current_processes = read_processes_with_stats()
+            # Второй замер общего времени CPU
+            current_cpu_stats = read_cpu_stats()
 
-            await asyncio.sleep(0.5)
+            # Вычисляем разницу общего времени CPU (в тиках)
+            cpu_time_diff_ticks = current_cpu_stats["total"] - prev_cpu_stats["total"]
 
-            processes = []
-            for p in psutil.process_iter(
-                ["pid", "name", "cpu_percent", "memory_percent"]
-            ):
-                try:
-                    processes.append(p)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+            # Вычисляем процент CPU для каждого процесса
+            process_cpu_percentages = calculate_process_cpu_percent(
+                prev_processes, current_processes, cpu_time_diff_ticks
+            )
 
-            # Сортируем по использованию CPU
-            top_procs = sorted(
-                processes, key=lambda x: x.info["cpu_percent"] or 0, reverse=True
+            # Вычисляем процент RAM для каждого процесса
+            total_memory_bytes = mem_info.get("total", 0)
+            process_memory_percentages = calculate_process_memory_percent(
+                current_processes, total_memory_bytes
+            )
+
+            # Добавляем проценты в данные процессов
+            for p in current_processes:
+                p["cpu_percent"] = process_cpu_percentages.get(p["pid"], 0.0)
+                p["memory_percent"] = process_memory_percentages.get(p["pid"], 0.0)
+
+            # Сортируем по CPU% и RAM% отдельно
+            top_procs_cpu = sorted(
+                current_processes, key=lambda x: x["cpu_percent"], reverse=True
+            )[:5]
+            top_procs_mem = sorted(
+                current_processes, key=lambda x: x["memory_percent"], reverse=True
             )[:5]
 
             proc_lines = []
-            for p in top_procs:
-                name = escape_html(p.info["name"][:20])
-                pid = escape_html(str(p.info["pid"]))
-                cpu = f"{p.info['cpu_percent'] or 0:.1f}"
-                memory = f"{p.info['memory_percent'] or 0:.1f}"
-
+            proc_lines.append("<b>По CPU:</b>")
+            for p in top_procs_cpu:
+                name = escape_html(p["name"][:20])
+                pid = escape_html(str(p["pid"]))
+                cpu = f"{p['cpu_percent']:.1f}"
+                memory = f"{p['memory_percent']:.1f}"
                 proc_lines.append(
                     f"— {name:<20} (PID {pid:>6}) CPU: {cpu:>5}% RAM: {memory:>5}%"
                 )
 
-            proc_info = "\n".join(proc_lines)
+            proc_lines.append("\n<b>По RAM:</b>")
+            for p in top_procs_mem:
+                name = escape_html(p["name"][:20])
+                pid = escape_html(str(p["pid"]))
+                cpu = f"{p['cpu_percent']:.1f}"
+                memory = f"{p['memory_percent']:.1f}"
+                proc_lines.append(
+                    f"— {name:<20} (PID {pid:>6}) CPU: {cpu:>5}% RAM: {memory:>5}%"
+                )
+
+            proc_info = (
+                "\n".join(proc_lines) if proc_lines else "Нет процессов для отображения"
+            )
         except Exception as e:
             logger.error(f"Ошибка при получении информации о процессах: {e}")
 
@@ -262,9 +658,9 @@ async def main(tgkey=None, chatID=None):
             f"• Аптайм: <code>{uptime_str}</code>\n"
             "------------------------\n"
             f"<b>CPU</b>: <code>{cpu_str}</code>\n"
-            f"<b>RAM</b>: <code>{mem_percent}</code> ({mem_used})\n"
-            f"<b>Swap</b>: <code>{swap_percent}</code> ({swap_used})\n"
-            f"<b>Диск</b>: <code>{disk_percent}</code> ({disk_used})\n"
+            f"<b>RAM</b>: <code>{mem_percent_str}</code> ({mem_used_str})\n"
+            f"<b>Swap</b>: <code>{swap_percent_str}</code> ({swap_used_str})\n"
+            f"<b>Диск</b>: <code>{disk_percent_str}</code> ({disk_used_str})\n"
             f"<b>Сеть</b>: {net_usage}\n"
             "------------------------\n"
             f"<b>Статус:</b>\n{alert_text_escaped}\n"
