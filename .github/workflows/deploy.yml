@@ -47,17 +47,30 @@ jobs:
             echo "Сборка и запуск..."
             docker compose -f Docker/docker-compose.yml up -d --build
 
+            echo "Ожидание запуска контейнеров..."
             sleep 10
-            echo "Проверка статуса контейнеров..."
-            if ! docker compose -f Docker/docker-compose.yml ps --services --filter status=running | grep -q "tg-server-bot"; then
-              echo "❌ Ошибка: сервис tg-server-bot не запущен"
-              exit 1
-            fi
 
-            if ! docker compose -f Docker/docker-compose.yml ps --services --filter status=running | grep -q "nginx"; then
-              echo "❌ Ошибка: сервис nginx не запущен"
-              exit 1
-            fi
+            echo "Проверка статуса контейнеров..."
+            # Добавляем цикл проверки с таймаутом
+            max_attempts=7
+            attempt=1
+            while [ $attempt -le $max_attempts ]; do
+              if docker compose -f Docker/docker-compose.yml ps --services --filter status=running | grep -q "bot" && \
+                 docker compose -f Docker/docker-compose.yml ps --services --filter status=running | grep -q "nginx"; then
+                echo "✅ Все контейнеры успешно запущены"
+                break
+              fi
+              
+              if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Превышено время ожидания запуска контейнеров"
+                docker compose -f Docker/docker-compose.yml logs
+                exit 1
+              fi
+
+              echo "⏳ Попытка $attempt из $max_attempts, ожидание 10 секунд..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
 
             echo "✅ Deployment completed"
 
