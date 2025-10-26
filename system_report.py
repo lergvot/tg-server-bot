@@ -424,6 +424,13 @@ def check_service(service_name):
 
 async def get_docker_containers():
     """Получаем информацию о работающих Docker контейнерах, группируем по проекту"""
+    # Проверяем доступность Docker socket
+    docker_socket = "/var/run/docker.sock"
+    if not os.path.exists(docker_socket) and not os.path.exists(
+        "/host_root" + docker_socket
+    ):
+        return "Docker socket недоступен в контейнере"
+
     # Проверяем наличие docker команды
     try:
         check_result = subprocess.run(
@@ -433,7 +440,7 @@ async def get_docker_containers():
             timeout=2,
         )
         if check_result.returncode != 0:
-            return "Docker клиент недоступен"
+            return "Docker клиент не найден (возможно нужен docker socket)"
     except Exception:
         return "Docker клиент недоступен"
 
@@ -746,8 +753,9 @@ async def main(tgkey=None, chatID=None):
             proc_lines = []
             proc_lines.append("<b>По CPU:</b>")
             for p in top_procs_cpu:
-                name = p["name"][:20]
-                pid = str(p["pid"])
+                # Экранируем только имена процессов и PID
+                name = escape_html(p["name"][:20])
+                pid = escape_html(str(p["pid"]))
                 cpu = f"{p['cpu_percent']:.1f}"
                 memory = f"{p['memory_percent']:.1f}"
                 proc_lines.append(
@@ -756,8 +764,9 @@ async def main(tgkey=None, chatID=None):
 
             proc_lines.append("\n<b>По RAM:</b>")
             for p in top_procs_mem:
-                name = p["name"][:20]
-                pid = str(p["pid"])
+                # Экранируем только имена процессов и PID
+                name = escape_html(p["name"][:20])
+                pid = escape_html(str(p["pid"]))
                 cpu = f"{p['cpu_percent']:.1f}"
                 memory = f"{p['memory_percent']:.1f}"
                 proc_lines.append(
@@ -770,17 +779,21 @@ async def main(tgkey=None, chatID=None):
         except Exception as e:
             logger.error(f"Ошибка при получении информации о процессах: {e}")
 
-        # Сервисы
-        services_to_check = ["ssh", "nginx", "docker"]
-        services_status = "\n".join(check_service(s) for s in services_to_check)
+        # Сервисы (пропускаем в контейнере - systemctl недоступен)
+        try:
+            services_to_check = ["ssh", "nginx", "docker"]
+            services_status = "\n".join(check_service(s) for s in services_to_check)
+        except Exception as e:
+            logger.debug(f"Пропуск проверки сервисов: {e}")
+            services_status = "N/A (контейнер без systemctl)"
 
-        # Экранирование данных
+        # Экранирование данных (proc_info не экранируем - там уже HTML и экранированы данные)
         hostname = escape_html(uname.node)
         os_info = escape_html(f"{uname.system} {uname.release}")
         docker_info_escaped = escape_html(docker_info)
         services_status_escaped = escape_html(services_status)
         alert_text_escaped = escape_html(alert_text)
-        proc_info_escaped = escape_html(proc_info)
+        proc_info_escaped = proc_info  # Не экранируем - там уже HTML теги
 
         # Формирование сообщения
         temp_line = f"• Температура CPU: <code>{cpu_temp}</code>\n" if cpu_temp else ""
@@ -790,15 +803,15 @@ async def main(tgkey=None, chatID=None):
             f"• Хост: <code>{hostname}</code>\n"
             f"• ОС: <code>{os_info}</code>\n"
             f"• CPU ядер: <code>{cpu_count}</code>\n"
-            f"• Load avg: <code>{load_avg['1min']:.2f} {load_avg['5min']:.2f} {load_avg['15min']:.2f}</code>\n"
+            f"• Средняя загрузка: <code>1m: {load_avg['1min']:.2f} | 5m: {load_avg['5min']:.2f} | 15m: {load_avg['15min']:.2f}</code>\n"
             f"{temp_line}"
-            f"• Загрузка: <code>{boot_time_str}</code>\n"
+            f"• Время запуска: <code>{boot_time_str}</code>\n"
             f"• Аптайм: <code>{uptime_str}</code>\n"
             "------------------------\n"
             f"<b>CPU</b>: <code>{cpu_str}</code>\n"
             f"<b>RAM</b>: <code>{mem_percent_str}</code> ({mem_used_str})\n"
             f"<b>Swap</b>: <code>{swap_percent_str}</code> ({swap_used_str})\n"
-            f"<b>Диск</b>: <code>{disk_percent_str}</code> ({disk_used_str})\n"
+            f"<b>Диск</b>: <code>{disk_percent_str}</code> ({disk_used_str} из {bytes_to_human_readable(disk_info.get('total', 0))})\n"
             f"<b>Диск I/O</b>: {disk_io_str}\n"
             f"<b>Сеть</b>: {net_usage}\n"
             "------------------------\n"
