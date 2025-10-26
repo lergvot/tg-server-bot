@@ -18,6 +18,62 @@ HOST_SYS_PATH = "/host/sys"
 HOST_ROOT_PATH = "/host_root"  # Для disk_usage
 
 
+def read_load_average():
+    """Читает среднюю загрузку системы из /host/proc/loadavg."""
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "loadavg"), "r") as f:
+            parts = f.read().strip().split()
+            if len(parts) >= 3:
+                return {
+                    "1min": float(parts[0]),
+                    "5min": float(parts[1]),
+                    "15min": float(parts[2]),
+                }
+    except FileNotFoundError:
+        logger.error(f"Файл {os.path.join(HOST_PROC_PATH, 'loadavg')} не найден")
+    except Exception as e:
+        logger.error(f"Ошибка при чтении loadavg: {e}")
+    return {"1min": 0.0, "5min": 0.0, "15min": 0.0}
+
+
+def read_cpu_count():
+    """Получает количество CPU ядер."""
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "cpuinfo"), "r") as f:
+            cpu_count = sum(1 for line in f if line.startswith("processor"))
+            return cpu_count if cpu_count > 0 else os.cpu_count() or 1
+    except Exception as e:
+        logger.error(f"Ошибка при чтении cpuinfo: {e}")
+        return os.cpu_count() or 1
+
+
+def read_cpu_temperature():
+    """Пытается прочитать температуру CPU из различных источников."""
+    temp_sources = [
+        # Intel/AMD common paths
+        "/sys/devices/virtual/thermal/thermal_zone0/temp",
+        "/host/sys/devices/virtual/thermal/thermal_zone0/temp",
+        # AMD specific
+        "/sys/class/hwmon/hwmon0/temp1_input",
+        "/host/sys/class/hwmon/hwmon0/temp1_input",
+        # Raspberry Pi
+        "/sys/class/thermal/thermal_zone0/temp",
+        "/host/sys/class/thermal/thermal_zone0/temp",
+    ]
+
+    for path in temp_sources:
+        try:
+            with open(path, "r") as f:
+                temp_mc = int(f.read().strip())
+                # Температура обычно в миллиградусах Цельсия
+                temp_c = temp_mc / 1000.0
+                return f"{temp_c:.1f}°C"
+        except (FileNotFoundError, ValueError, OSError):
+            continue
+
+    return None
+
+
 def read_cpu_stats():
     """Читает /host/proc/stat и возвращает информацию о CPU."""
     cpu_times = {}
@@ -93,6 +149,29 @@ def read_disk_stats(path="/"):
     except Exception as e:
         logger.error(f"Ошибка при получении статистики диска для {full_path}: {e}")
         return {"total": 0, "used": 0, "free": 0, "percent": 0}
+
+
+def read_disk_io():
+    """Читает I/O статистику дисков из /host/proc/diskstats."""
+    disk_io = {}
+    try:
+        with open(os.path.join(HOST_PROC_PATH, "diskstats"), "r") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 14:
+                    device = parts[2]
+                    if not device.startswith("loop") and not device.startswith("ram"):
+                        read_sectors = int(parts[5])
+                        write_sectors = int(parts[9])
+                        disk_io[device] = {
+                            "read_sectors": read_sectors,
+                            "write_sectors": write_sectors,
+                        }
+    except FileNotFoundError:
+        logger.error(f"Файл {os.path.join(HOST_PROC_PATH, 'diskstats')} не найден")
+    except Exception as e:
+        logger.error(f"Ошибка при чтении diskstats: {e}")
+    return disk_io
 
 
 def read_network_stats():
@@ -345,11 +424,24 @@ def check_service(service_name):
 
 async def get_docker_containers():
     """Получаем информацию о работающих Docker контейнерах, группируем по проекту"""
+    # Проверяем наличие docker команды
+    try:
+        check_result = subprocess.run(
+            ["which", "docker"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2,
+        )
+        if check_result.returncode != 0:
+            return "Docker клиент недоступен"
+    except Exception:
+        return "Docker клиент недоступен"
+
     try:
         # Получаем список всех контейнеров с именем и ID
         result = subprocess.run(
             [
-                "/usr/bin/docker",
+                "docker",
                 "ps",
                 "--format",
                 "{{.Names}}|{{.ID}}",
@@ -357,16 +449,17 @@ async def get_docker_containers():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=15,
+            timeout=10,
         )
 
         if result.returncode != 0:
-            if "command not found" in result.stderr:
-                return "Docker не установлен"
-            elif "Cannot connect" in result.stderr:
-                return "Docker не запущен"
+            if (
+                "command not found" in result.stderr
+                or "Cannot connect" in result.stderr
+            ):
+                return "Docker не доступен"
             else:
-                return f"Ошибка Docker: {result.stderr.strip()[:100]}"
+                return f"Ошибка: {result.stderr.strip()[:50]}"
 
         container_names = {}
         for line in result.stdout.strip().split("\n"):
@@ -383,7 +476,7 @@ async def get_docker_containers():
         # Получаем статистику для всех контейнеров
         stats_result = subprocess.run(
             [
-                "/usr/bin/docker",
+                "docker",
                 "stats",
                 "--no-stream",
                 "--format",
@@ -392,7 +485,7 @@ async def get_docker_containers():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=15,
+            timeout=10,
         )
 
         if stats_result.returncode != 0:
@@ -443,7 +536,7 @@ async def get_docker_containers():
         return "Таймаут запроса к Docker"
     except Exception as e:
         logger.error(f"Ошибка при получении Docker контейнеров: {e}")
-        return f"Ошибка получения статистики"
+        return "Ошибка получения статистики"
 
 
 async def main(tgkey=None, chatID=None):
@@ -451,6 +544,15 @@ async def main(tgkey=None, chatID=None):
     try:
         # Базовая информация о системе
         uname = platform.uname()
+
+        # Количество CPU ядер
+        cpu_count = read_cpu_count()
+
+        # Load average
+        load_avg = read_load_average()
+
+        # Температура CPU
+        cpu_temp = read_cpu_temperature()
 
         # Время загрузки и аптайм (из /host/proc/stat)
         try:
@@ -529,6 +631,32 @@ async def main(tgkey=None, chatID=None):
             disk_percent_str = "N/A"
             disk_used_str = "N/A"
 
+        # Disk I/O
+        try:
+            prev_disk_io = read_disk_io()
+            await asyncio.sleep(1)
+            current_disk_io = read_disk_io()
+            # Вычисляем разницу I/O
+            total_read = 0
+            total_write = 0
+            for device in current_disk_io:
+                if device in prev_disk_io:
+                    read_diff = (
+                        current_disk_io[device]["read_sectors"]
+                        - prev_disk_io[device]["read_sectors"]
+                    )
+                    write_diff = (
+                        current_disk_io[device]["write_sectors"]
+                        - prev_disk_io[device]["write_sectors"]
+                    )
+                    # Секторы обычно по 512 байт
+                    total_read += read_diff * 512
+                    total_write += write_diff * 512
+            disk_io_str = f"⬆️ {bytes_to_human_readable(total_write)}/s | ⬇️ {bytes_to_human_readable(total_read)}/s"
+        except Exception as e:
+            logger.error(f"Ошибка при получении I/O диска: {e}")
+            disk_io_str = "N/A"
+
         # Сеть (из /host/proc/net/dev)
         net_usage = "N/A"
         try:
@@ -558,8 +686,14 @@ async def main(tgkey=None, chatID=None):
         alerts = []
         if isinstance(cpu_percent, (int, float)) and cpu_percent > 85:
             alerts.append("⚠️ Высокая нагрузка CPU")
+        if load_avg["1min"] > cpu_count * 2:
+            alerts.append(
+                f"⚠️ Высокий load average ({load_avg['1min']:.2f} > {cpu_count * 2})"
+            )
         if isinstance(mem_percent, (int, float)) and mem_percent > 90:
             alerts.append("⚠️ Критическое использование RAM")
+        if isinstance(swap_percent, (int, float)) and swap_percent > 80:
+            alerts.append("⚠️ Активное использование swap")
         if (
             isinstance(disk_info.get("percent"), (int, float))
             and disk_info["percent"] > 90
@@ -612,8 +746,8 @@ async def main(tgkey=None, chatID=None):
             proc_lines = []
             proc_lines.append("<b>По CPU:</b>")
             for p in top_procs_cpu:
-                name = escape_html(p["name"][:20])
-                pid = escape_html(str(p["pid"]))
+                name = p["name"][:20]
+                pid = str(p["pid"])
                 cpu = f"{p['cpu_percent']:.1f}"
                 memory = f"{p['memory_percent']:.1f}"
                 proc_lines.append(
@@ -622,8 +756,8 @@ async def main(tgkey=None, chatID=None):
 
             proc_lines.append("\n<b>По RAM:</b>")
             for p in top_procs_mem:
-                name = escape_html(p["name"][:20])
-                pid = escape_html(str(p["pid"]))
+                name = p["name"][:20]
+                pid = str(p["pid"])
                 cpu = f"{p['cpu_percent']:.1f}"
                 memory = f"{p['memory_percent']:.1f}"
                 proc_lines.append(
@@ -649,11 +783,15 @@ async def main(tgkey=None, chatID=None):
         proc_info_escaped = escape_html(proc_info)
 
         # Формирование сообщения
+        temp_line = f"• Температура CPU: <code>{cpu_temp}</code>\n" if cpu_temp else ""
         message = (
             "🖥️ <b>Отчет о состоянии сервера</b>\n"
             "========================\n"
             f"• Хост: <code>{hostname}</code>\n"
             f"• ОС: <code>{os_info}</code>\n"
+            f"• CPU ядер: <code>{cpu_count}</code>\n"
+            f"• Load avg: <code>{load_avg['1min']:.2f} {load_avg['5min']:.2f} {load_avg['15min']:.2f}</code>\n"
+            f"{temp_line}"
             f"• Загрузка: <code>{boot_time_str}</code>\n"
             f"• Аптайм: <code>{uptime_str}</code>\n"
             "------------------------\n"
@@ -661,6 +799,7 @@ async def main(tgkey=None, chatID=None):
             f"<b>RAM</b>: <code>{mem_percent_str}</code> ({mem_used_str})\n"
             f"<b>Swap</b>: <code>{swap_percent_str}</code> ({swap_used_str})\n"
             f"<b>Диск</b>: <code>{disk_percent_str}</code> ({disk_used_str})\n"
+            f"<b>Диск I/O</b>: {disk_io_str}\n"
             f"<b>Сеть</b>: {net_usage}\n"
             "------------------------\n"
             f"<b>Статус:</b>\n{alert_text_escaped}\n"
