@@ -424,126 +424,97 @@ def check_service(service_name):
 
 async def get_docker_containers():
     """Получаем информацию о работающих Docker контейнерах, группируем по проекту"""
-    # Проверяем доступность Docker socket
-    docker_socket = "/var/run/docker.sock"
-    if not os.path.exists(docker_socket) and not os.path.exists(
-        "/host_root" + docker_socket
-    ):
-        return "Docker socket недоступен в контейнере"
-
-    # Проверяем наличие docker команды
     try:
-        check_result = subprocess.run(
-            ["which", "docker"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=2,
-        )
-        if check_result.returncode != 0:
-            return "Docker клиент не найден (возможно нужен docker socket)"
-    except Exception:
-        return "Docker клиент недоступен"
+        import docker
 
-    try:
-        # Получаем список всех контейнеров с именем и ID
-        result = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "--format",
-                "{{.Names}}|{{.ID}}",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10,
-        )
+        # Подключаемся к Docker daemon через socket
+        try:
+            client = docker.from_env()
+            # Проверяем подключение
+            client.ping()
+        except Exception as e:
+            return f"Docker недоступен: {str(e)[:50]}"
 
-        if result.returncode != 0:
-            if (
-                "command not found" in result.stderr
-                or "Cannot connect" in result.stderr
-            ):
-                return "Docker не доступен"
-            else:
-                return f"Ошибка: {result.stderr.strip()[:50]}"
+        try:
+            # Получаем все работающие контейнеры
+            containers = client.containers.list()
 
-        container_names = {}
-        for line in result.stdout.strip().split("\n"):
-            if line.strip():
-                parts = line.split("|")
-                if len(parts) >= 2:
-                    name = parts[0]
-                    container_id = parts[1][:12]
-                    container_names[container_id] = name
+            if not containers:
+                return "Нет работающих контейнеров"
 
-        if not container_names:
-            return "Нет работающих контейнеров"
+            # Группируем контейнеры по имени проекта (до первого _)
+            grouped_containers = defaultdict(list)
 
-        # Получаем статистику для всех контейнеров
-        stats_result = subprocess.run(
-            [
-                "docker",
-                "stats",
-                "--no-stream",
-                "--format",
-                "{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=10,
-        )
+            for container in containers:
+                name = container.name
+                container_id = container.short_id
 
-        if stats_result.returncode != 0:
-            return f"Ошибка получения статистики: {stats_result.stderr.strip()[:100]}"
+                # Извлекаем имя проекта из имени контейнера
+                project_match = re.match(r"^([a-zA-Z0-9_-]+)_", name)
+                project_name = project_match.group(1) if project_match else "default"
 
-        # Словарь для хранения статистики каждого контейнера
-        container_stats = {}
-        for line in stats_result.stdout.strip().split("\n"):
-            if line.strip():
-                parts = line.split("|")
-                if len(parts) >= 4:
-                    container_id = parts[0][:12]  # Усекаем ID, как в ps
-                    cpu_percent = parts[1].strip() or "-"
-                    mem_usage = parts[2].strip() or "-"
-                    mem_percent = parts[3].strip() or "-"
-                    container_stats[container_id] = {
-                        "cpu": cpu_percent,
-                        "mem_usage": mem_usage,
-                        "mem_percent": mem_percent,
-                    }
+                # Получаем статистику контейнера
+                try:
+                    stats = container.stats(stream=False)
 
-        # Группируем контейнеры по имени проекта (до первого _)
-        grouped_containers = defaultdict(list)
-        for container_id, name in container_names.items():
-            # Извлекаем имя проекта из имени контейнера
-            # Пример: myproject_web_1 -> myproject
-            project_match = re.match(r"^([a-zA-Z0-9_-]+)_", name)
-            project_name = project_match.group(1) if project_match else "default"
-            # Получаем статистику для этого контейнера
-            stats = container_stats.get(
-                container_id, {"cpu": "-", "mem_usage": "-", "mem_percent": "-"}
-            )
-            container_info = f"• {name} ({container_id}), CPU: {stats['cpu']}, RAM: {stats['mem_usage']} ({stats['mem_percent']})"
-            grouped_containers[project_name].append(container_info)
+                    # Вычисляем CPU процент
+                    cpu_stats = stats["cpu_stats"]
+                    precpu_stats = stats["precpu_stats"]
 
-        if not grouped_containers:
-            return "Нет работающих контейнеров"
+                    cpu_delta = (
+                        cpu_stats["cpu_usage"]["total_usage"]
+                        - precpu_stats["cpu_usage"]["total_usage"]
+                    )
+                    system_delta = (
+                        cpu_stats["system_cpu_usage"] - precpu_stats["system_cpu_usage"]
+                    )
 
-        # Формируем строку отчёта
-        report_lines = []
-        for project, containers in grouped_containers.items():
-            report_lines.append(f"<b>Проект '{project}':</b>")
-            report_lines.extend(containers)
+                    if system_delta > 0 and cpu_delta > 0:
+                        cpu_percent = (
+                            (cpu_delta / system_delta)
+                            * len(cpu_stats["cpu_usage"]["percpu_usage"])
+                            * 100.0
+                        )
+                        cpu_str = f"{cpu_percent:.1f}%"
+                    else:
+                        cpu_str = "0.0%"
 
-        return "\n".join(report_lines)
+                    # Вычисляем память
+                    mem_usage = stats["memory_stats"]["usage"]
+                    mem_limit = stats["memory_stats"]["limit"]
+                    mem_percent = (
+                        (mem_usage / mem_limit) * 100.0 if mem_limit > 0 else 0
+                    )
 
-    except subprocess.TimeoutExpired:
-        return "Таймаут запроса к Docker"
+                    mem_usage_str = bytes_to_human_readable(mem_usage)
+                    mem_limit_str = bytes_to_human_readable(mem_limit)
+                    mem_str = f"{mem_usage_str} / {mem_limit_str}"
+                    mem_percent_str = f"{mem_percent:.1f}%"
+
+                except Exception:
+                    cpu_str = "N/A"
+                    mem_str = "N/A"
+                    mem_percent_str = "N/A"
+
+                container_info = f"• {name} ({container_id}), CPU: {cpu_str}, RAM: {mem_str} ({mem_percent_str})"
+                grouped_containers[project_name].append(container_info)
+
+            # Формируем строку отчёта
+            report_lines = []
+            for project, containers in grouped_containers.items():
+                report_lines.append(f"<b>Проект '{project}':</b>")
+                report_lines.extend(containers)
+
+            return "\n".join(report_lines)
+
+        finally:
+            client.close()
+
+    except ImportError:
+        return "Docker библиотека недоступна"
     except Exception as e:
         logger.error(f"Ошибка при получении Docker контейнеров: {e}")
-        return "Ошибка получения статистики"
+        return f"Ошибка получения статистики: {str(e)[:50]}"
 
 
 async def main(tgkey=None, chatID=None):
