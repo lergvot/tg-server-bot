@@ -1,15 +1,96 @@
-# Dev/Test
-tests/
+# Git
 .git/
-.env
-venv/
+.gitignore
+.gitattributes
 
-# Cache
+# Python runtime and build artifacts
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Data
-*.db
-*.sqlite3
-data/
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+pytest.ini
+.testmondata
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# Logs and runtime files
+*.log
 logs/
+tg_bot.log
+
+# Documentation and project files
+README.md
+*.md
+LICENSE
+CHANGELOG*
+
+# Development and OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+.directory
+
+# Docker files (don't include in build context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD and deployment
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+Jenkinsfile
+
+# Temporary and backup files
+*.tmp
+*.bak
+*.backup
+*.orig
+*~
+
+# Security and secrets
+.env
+.env.*
+secrets/
+*.key
+*.pem
+*.crt
